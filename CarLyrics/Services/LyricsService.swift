@@ -29,7 +29,7 @@ final class LyricsService {
 
     init() {
         let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-        cacheDirectory = base.appendingPathComponent("lyrics", isDirectory: true)
+        cacheDirectory = base.appendingPathComponent("lyrics-v2", isDirectory: true)
         try? FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
     }
 
@@ -69,17 +69,26 @@ final class LyricsService {
             return r
         }
 
-        var search = URLComponents(string: "https://lrclib.net/api/search")!
-        search.queryItems = [
-            URLQueryItem(name: "track_name", value: q.title),
-            URLQueryItem(name: "artist_name", value: q.artist),
-        ]
-        let (sdata, sstatus) = try await request(search.url!)
-        guard sstatus == 200 else { return .notFound }
-        let list = (try? JSONDecoder().decode([LRCLIBTrack].self, from: sdata)) ?? []
-        debugLog("LRCLIB /search 找到 \(list.count) 筆")
-        if let best = LRCLIBMatcher.bestMatch(list, duration: q.duration), let r = result(from: best) {
-            return r
+        // 放寬搜尋：多種歌名寫法 × (指定歌手 / 全文搜尋)，用歌曲長度過濾，找到就停
+        for title in TitleVariants.make(q.title) {
+            let searches: [[URLQueryItem]] = [
+                [URLQueryItem(name: "track_name", value: title), URLQueryItem(name: "artist_name", value: q.artist)],
+                [URLQueryItem(name: "q", value: "\(title) \(q.artist)")],
+                [URLQueryItem(name: "track_name", value: title)],
+            ]
+            for items in searches {
+                var search = URLComponents(string: "https://lrclib.net/api/search")!
+                search.queryItems = items
+                let (sdata, sstatus) = try await request(search.url!)
+                guard sstatus == 200 else { continue }
+                let list = (try? JSONDecoder().decode([LRCLIBTrack].self, from: sdata)) ?? []
+                let label = items.map { "\($0.name)=\($0.value ?? "")" }.joined(separator: "&")
+                debugLog("LRCLIB search \(label)：\(list.count) 筆")
+                if let best = LRCLIBMatcher.bestMatch(list, duration: q.duration), let r = result(from: best) {
+                    debugLog("採用 LRCLIB #\(best.id)：\(best.trackName ?? "") – \(best.artistName ?? "")")
+                    return r
+                }
+            }
         }
         return .notFound
     }
