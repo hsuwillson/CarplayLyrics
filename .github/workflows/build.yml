@@ -33,12 +33,16 @@ jobs:
             -destination "id=$SIM_ID" \
             -derivedDataPath build-tests \
             CODE_SIGNING_ALLOWED=NO \
-            | tee test.log | grep -E "error:|Test Case .* (passed|failed)|Executed|TEST" || true
-          test "${PIPESTATUS[0]}" -eq 0
+            > test.log 2>&1 && status=0 || status=$?
+          grep -E "error:|Test Case .* (passed|failed)|Executed|TEST" test.log || true
+          if [ "$status" -ne 0 ]; then
+            echo "::error::單元測試失敗（exit $status），錯誤如下："
+            grep -E "error:|failed" test.log | head -60
+            exit "$status"
+          fi
 
       - name: Build (no signing)
         run: |
-          set -o pipefail
           xcodebuild build \
             -project CarLyrics.xcodeproj \
             -scheme CarLyrics \
@@ -48,8 +52,15 @@ jobs:
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
             CURRENT_PROJECT_VERSION=${{ github.run_number }} \
-            | tee xcodebuild.log | grep -E "error:|BUILD" || true
-          test "${PIPESTATUS[0]}" -eq 0
+            > xcodebuild.log 2>&1 && status=0 || status=$?
+          grep -E "BUILD (SUCCEEDED|FAILED)" xcodebuild.log || true
+          if [ "$status" -ne 0 ]; then
+            echo "::error::編譯失敗（exit $status），錯誤如下："
+            grep -E "error:" xcodebuild.log | sort -u | head -60
+            # 每個錯誤也做成 annotation，在 Actions 頁面上直接看得到
+            grep -E "^/.*error:" xcodebuild.log | sort -u | head -20 | sed 's/^/::error::/'
+            exit "$status"
+          fi
 
       # 把 git SHA 寫進 Info.plist，除錯頁會顯示（確認手機上裝的是哪一版）
       - name: Stamp build info
