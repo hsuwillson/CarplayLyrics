@@ -67,7 +67,17 @@ jobs:
                   if f["coveredLines"] < f["executableLines"]:
                       out = subprocess.run(["xcrun", "xccov", "view", "--archive", "--file", f["path"], "TestResults.xcresult"],
                                            capture_output=True, text=True).stdout
-                      miss = [m.group(1) for m in (re.match(r"^\s*(\d+):\s*0\b", l) for l in out.splitlines()) if m]
+                      miss, cur = [], None
+                      for l in out.splitlines():
+                          m = re.match(r"^\s*(\d+):\s*(\S+)", l)
+                          if m:
+                              cur = m.group(1)
+                              if m.group(2) == "0":
+                                  miss.append(cur)
+                                  continue
+                          # 同一行裡有沒執行到的區段（例如 ?? 右邊、沒呼叫過的 closure）
+                          if cur and re.search(r"\b0\)", l) and cur not in miss:
+                              miss.append(cur + "(部分)")
                       print(f"::warning::覆蓋率 {f['name']} {pct:.1f}%，未執行的行：{','.join(miss[:60])}")
           pct = 100 * total_cov / max(total_exe, 1)
           summary.write(f"\n**Core 合計：{pct:.2f}%（{total_cov}/{total_exe} 行）**\n")

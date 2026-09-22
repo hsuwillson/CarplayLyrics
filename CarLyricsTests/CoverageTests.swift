@@ -310,4 +310,46 @@ final class MiscCoverageTests: XCTestCase {
         XCTAssertEqual(PollBackoff.delay(forErrorStreak: 0), 5)
         XCTAssertEqual(PollBackoff.delay(forErrorStreak: 20), 60)
     }
+
+    func testEmbeddedProfileFromBundle() throws {
+        XCTAssertNil(ProvisioningProfile.embedded())   // 測試執行檔沒有描述檔
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let xml = """
+        <?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>Entitlements</key><dict>\
+        <key>com.apple.security.application-groups</key><array><string>group.test</string></array></dict></dict></plist>
+        """
+        try Data(xml.utf8).write(to: dir.appendingPathComponent("embedded.mobileprovision"))
+        let bundle = try XCTUnwrap(Bundle(url: dir))
+        XCTAssertEqual(ProvisioningProfile.embedded(in: bundle)?.appGroups, ["group.test"])
+    }
+
+    func testSongOffsetStoreDefaultInit() {
+        XCTAssertEqual(SongOffsetStore().defaults, UserDefaults.standard)
+    }
+
+    func testPlainFallbackPicksClosest() {
+        func t(_ id: Int, _ d: Double) -> LRCLIBTrack {
+            LRCLIBTrack(id: id, trackName: nil, artistName: nil, albumName: nil, duration: d,
+                        instrumental: false, plainLyrics: "未同步", syncedLyrics: nil)
+        }
+        XCTAssertEqual(LRCLIBMatcher.bestMatch([t(1, 104), t(2, 101)], duration: 100)?.id, 2)
+    }
+
+    func testImageWithoutWidthAndQueueWithoutID() {
+        let imgs = [CurrentlyPlayingResponse.Image(url: "https://example.com/x.jpg", width: nil, height: nil),
+                    CurrentlyPlayingResponse.Image(url: "https://example.com/y.jpg", width: 60, height: 60)]
+        XCTAssertEqual(SpotifyResponseParser.pick(imgs, target: 64)?.absoluteString, "https://example.com/y.jpg")
+        let json = #"{"queue": [{"id": null, "name": "本機", "duration_ms": 1}]}"#
+        XCTAssertNil(SpotifyResponseParser.parseQueueFirst(Data(json.utf8)))
+    }
+
+    func testEnginePausedToPaused() {
+        let t0 = Date(timeIntervalSince1970: 0)
+        var e = LyricsSyncEngine()
+        e.update(PlaybackSnapshot(trackID: "a", progress: 5, duration: 10, isPlaying: false, timestamp: t0))
+        XCTAssertEqual(e.update(PlaybackSnapshot(trackID: "a", progress: 5, duration: 10, isPlaying: false,
+                                                 timestamp: t0.addingTimeInterval(3))), .none)
+    }
 }

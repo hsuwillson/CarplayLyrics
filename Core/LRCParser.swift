@@ -23,7 +23,6 @@ enum LRCParser {
 
         for rawLine in source.components(separatedBy: .newlines) {
             var rest = Substring(rawLine.trimmingCharacters(in: .whitespaces))
-            if rest.hasPrefix("\u{FEFF}") { rest = rest.dropFirst() }
             var times: [TimeInterval] = []
 
             while rest.first == "[", let close = rest.firstIndex(of: "]") {
