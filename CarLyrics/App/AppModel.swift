@@ -26,10 +26,11 @@ final class AppModel: ObservableObject {
 
     // MARK: 除錯資訊
 
-    @Published private(set) var lastPollAt: Date?
-    @Published private(set) var maxPollGap: TimeInterval = 0
-    @Published private(set) var lastResponseBytes = 0
-    @Published private(set) var lastErrorMessage: String?
+    // 除錯頁每秒刷新，不需要 @Published（避免每次輪詢觸發整頁重繪）
+    private(set) var lastPollAt: Date?
+    private(set) var maxPollGap: TimeInterval = 0
+    private(set) var lastResponseBytes = 0
+    private(set) var lastErrorMessage: String?
 
     // MARK: 設定
 
@@ -38,6 +39,7 @@ final class AppModel: ObservableObject {
         didSet {
             UserDefaults.standard.set(offset, forKey: "lyricsOffset")
             tick()
+            rescheduleTick()
         }
     }
 
@@ -46,6 +48,7 @@ final class AppModel: ObservableObject {
         didSet {
             if let id = nowPlaying?.trackID { songOffsets.set(songOffset, for: id) }
             tick()
+            rescheduleTick()
         }
     }
 
@@ -53,7 +56,7 @@ final class AppModel: ObservableObject {
     @Published var backgroundEnabled: Bool {
         didSet {
             UserDefaults.standard.set(backgroundEnabled, forKey: "backgroundEnabled")
-            if backgroundEnabled { backgroundKeeper.start() } else { backgroundKeeper.stop() }
+            if backgroundEnabled && auth.isLoggedIn { backgroundKeeper.start() } else { backgroundKeeper.stop() }
         }
     }
 
@@ -76,9 +79,18 @@ final class AppModel: ObservableObject {
     // MARK: 內部狀態
 
     private var isForeground = true
-    /// 沒在播放（停止或暫停）超過這個秒數：結束 Live Activity；在背景時也停止背景執行以省電
-    static let idleEndInterval: TimeInterval = 600
-    private var idleSince: Date?
+    /// 在背景閒置超過門檻：結束 Live Activity 並停止背景執行以省電
+    /// - 沒有播放中的歌曲：10 分鐘
+    /// - 暫停中：30 分鐘（例如開車講電話，講完 Spotify 會自動續播）
+    static let nothingEndInterval: TimeInterval = 600
+    static let pausedEndInterval: TimeInterval = 1800
+    private enum IdleKind { case paused, nothing }
+    private var idle: (since: Date, kind: IdleKind)?
+
+    /// 專注模式開著時，螢幕不自動關閉
+    var focusModeActive = false {
+        didSet { updateIdleTimer() }
+    }
 
     private var pollTask: Task<Void, Never>?
     private var pollGeneration = 0
@@ -92,7 +104,12 @@ final class AppModel: ObservableObject {
     /// 連續幾次「沒在播放」；要連續 2 次才清空畫面（避免偶發 204 造成閃爍）
     private var nothingStreak = 0
     private var errorStreak = 0
-    private var quotaMode = false
+    /// 配額用完後降低頻率，一小時後恢復
+    private var quotaModeUntil = Date.distantPast
+    private var quotaMode: Bool { Date() < quotaModeUntil }
+    /// 樂觀更新後的保護窗：這段時間內與樂觀狀態矛盾的回應視為 Spotify 還沒套用
+    private var optimisticUntil = Date.distantPast
+    private var lastHeartbeatWrite = Date.distantPast
     /// 偵測到過期資料時，下一次改用 /me/player
     private var useFullPlayer = false
 
@@ -105,6 +122,11 @@ final class AppModel: ObservableObject {
         liveActivityEnabled = UserDefaults.standard.object(forKey: "liveActivityEnabled") as? Bool ?? true
         keepScreenOn = UserDefaults.standard.bool(forKey: "keepScreenOn")
         checkPreviousHeartbeat()
+        // 來電 / Siri 結束：閒置計時重新開始（通話期間 Spotify 是暫停的）
+        backgroundKeeper.onInterruptionEnded = { [weak self] in
+            guard let self, let current = self.idle else { return }
+            self.idle = (since: Date(), kind: current.kind)
+        }
     }
 
     // MARK: - 前景 / 背景
@@ -138,14 +160,23 @@ final class AppModel: ObservableObject {
             debugLog("開始輪詢（\(BuildInfo.summary)）")
             startPollLoop()
         }
-        if tickTask == nil {
-            tickTask = Task { [weak self] in
-                while !Task.isCancelled {
-                    let delay = self?.tick() ?? 1
-                    try? await Task.sleep(for: .seconds(delay), tolerance: .milliseconds(15))
-                }
+        if tickTask == nil { startTickLoop() }
+    }
+
+    private func startTickLoop() {
+        tickTask = Task { [weak self] in
+            while !Task.isCancelled {
+                let delay = self?.tick() ?? 1
+                try? await Task.sleep(for: .seconds(delay), tolerance: .milliseconds(15))
             }
         }
+    }
+
+    /// 狀態改變（換歌、拖動、歌詞載入、調整延遲）後重新排程，讓下一次換句準時
+    private func rescheduleTick() {
+        guard tickTask != nil else { return }
+        tickTask?.cancel()
+        startTickLoop()
     }
 
     func stop() {
@@ -254,14 +285,16 @@ final class AppModel: ObservableObject {
         case .play: updated = np.with(progress: pos, isPlaying: true)
         case .next, .previous: return
         }
-        // 在這之前送出的輪詢回應都視為過期
+        // 在這之前送出的輪詢回應都視為過期；接下來 2 秒內矛盾的回應也視為延遲
         lastAcceptedSentAt = Date()
+        optimisticUntil = Date().addingTimeInterval(2)
         nowPlaying = updated
         engine.update(PlaybackSnapshot(trackID: updated.trackID, progress: updated.progress,
                                        duration: updated.duration, isPlaying: updated.isPlaying,
                                        timestamp: Date()))
         updateIdleTimer()
         tick()
+        rescheduleTick()
         pushLiveActivity()
     }
 
@@ -270,13 +303,20 @@ final class AppModel: ObservableObject {
     /// 執行一次輪詢，回傳下一次輪詢前要等待的秒數
     private func pollOnce() async -> TimeInterval {
         recordHeartbeat()
-        if backgroundEnabled && auth.isLoggedIn { backgroundKeeper.ensureRunning() }
-        liveActivity.keepAlive()
 
         guard auth.isLoggedIn else {
+            // 可能是在背景被自動登出（refresh token 失效）：停止一切，不要空轉耗電
+            if liveActivity.isActive { liveActivity.end() }
+            if backgroundKeeper.wantsRunning { backgroundKeeper.stop() }
             setStatus("請先登入 Spotify")
+            if !isForeground {
+                stop()
+                return 0
+            }
             return 10
         }
+        if backgroundEnabled { backgroundKeeper.ensureRunning() }
+        liveActivity.keepAlive()
         do {
             let full = useFullPlayer
             useFullPlayer = false
@@ -284,7 +324,7 @@ final class AppModel: ObservableObject {
             lastResponseBytes = api.lastResponseBytes
             guard !Task.isCancelled else { return 0 }
             errorStreak = 0
-            lastErrorMessage = nil
+            if lastErrorMessage != nil { lastErrorMessage = nil }
 
             switch result {
             case .playing(let np, let measuredAt, let sentAt):
@@ -297,11 +337,15 @@ final class AppModel: ObservableObject {
                 nothingStreak = 0
                 handle(np, measuredAt: measuredAt)
                 setStatus(np.isPlaying ? "播放中" : "已暫停")
-                if np.isPlaying { idleSince = nil } else if idleSince == nil { idleSince = Date() }
+                if np.isPlaying {
+                    idle = nil
+                } else if idle?.kind != .paused {
+                    idle = (since: Date(), kind: .paused)
+                }
                 if checkIdle() { return 30 }
                 if quotaMode { return 6 }
                 if useFullPlayer { return 1 }   // 過期資料 → 盡快用另一個端點確認
-                return np.isPlaying ? 2.5 : 5
+                return np.isPlaying ? adaptiveDelay(for: np) : 5
 
             case .nothing:
                 nothingStreak += 1
@@ -310,17 +354,18 @@ final class AppModel: ObservableObject {
                 if nowPlaying != nil {
                     debugLog("Spotify 沒有在播放")
                     clearPlayback()
-                    pushStoppedLiveActivity()
                 }
-                if idleSince == nil { idleSince = Date() }
-                setStatus("Spotify 沒有在播放")
+                // 佔位的「連接 Spotify 中…」也要換成正確狀態（update 會去重）
+                pushStoppedLiveActivity()
+                if idle?.kind != .nothing { idle = (since: Date(), kind: .nothing) }
+                setStatus("Spotify 沒有在播放音樂（或正在播 Podcast）")
                 if checkIdle() { return 30 }
                 return 10
 
             case .rateLimited(let retryAfter, let quotaExceeded):
                 debugLog("HTTP 429，Retry-After \(Int(retryAfter)) 秒\(quotaExceeded ? "（配額用完）" : "")")
                 if quotaExceeded {
-                    quotaMode = true
+                    quotaModeUntil = Date().addingTimeInterval(3600)
                     setStatus("Spotify API 配額用完，已降低查詢頻率")
                     return max(retryAfter, 30)
                 }
@@ -335,25 +380,48 @@ final class AppModel: ObservableObject {
             lastErrorMessage = error.localizedDescription
             debugLog("輪詢錯誤（\(Int(delay)) 秒後重試）：\(error.localizedDescription)")
             setStatus("錯誤：\(error.localizedDescription)")
+            // 暫停中又沒訊號（地下室）時也要能省電
+            if checkIdle() { return delay }
             return delay
         }
     }
 
     /// 閒置太久：結束 Live Activity；在背景時停止一切以省電。回傳 true 代表已停止。
     private func checkIdle() -> Bool {
-        guard let since = idleSince, Date().timeIntervalSince(since) > Self.idleEndInterval else { return false }
+        guard let idle else { return false }
+        let limit = idle.kind == .paused ? Self.pausedEndInterval : Self.nothingEndInterval
+        guard Date().timeIntervalSince(idle.since) > limit else { return false }
+        // 前景時什麼都不做：Live Activity 留著（之後進背景就無法再開始）
+        guard !isForeground else { return false }
         if liveActivity.isActive {
-            debugLog("閒置超過 \(Int(Self.idleEndInterval / 60)) 分鐘，結束 Live Activity")
+            debugLog("閒置超過 \(Int(limit / 60)) 分鐘，結束 Live Activity")
             liveActivity.end()
         }
-        guard !isForeground else { return false }
         debugLog("閒置中，停止背景執行以省電（下次打開 App 會自動恢復）")
         backgroundKeeper.stop()
         stop()
         return true
     }
 
+    /// 自適應輪詢：接近歌曲結尾時，在預計換歌後馬上查一次
+    private func adaptiveDelay(for np: NowPlaying) -> TimeInterval {
+        guard let pos = engine.position(at: Date()), np.duration > 0 else { return 2.5 }
+        let remaining = np.duration - pos
+        if remaining > 0, remaining < 2.5 { return max(0.5, remaining + 0.4) }
+        return 2.5
+    }
+
     private func handle(_ np: NowPlaying, measuredAt: Date) {
+        // 樂觀更新保護窗內，與目前狀態矛盾的回應視為 Spotify 還沒套用（Spotify Connect 常有 1–2 秒延遲）
+        if Date() < optimisticUntil, let current = engine.snapshot, current.trackID == np.trackID {
+            let contradicts = current.isPlaying != np.isPlaying
+                || abs(current.position(at: measuredAt) - np.progress) > engine.seekThreshold
+            if contradicts {
+                debugLog("樂觀更新保護：忽略延遲的回應")
+                useFullPlayer = true
+                return
+            }
+        }
         let snapshot = PlaybackSnapshot(trackID: np.trackID, progress: np.progress, duration: np.duration,
                                         isPlaying: np.isPlaying, timestamp: measuredAt)
         let change = engine.update(snapshot)
@@ -372,9 +440,11 @@ final class AppModel: ObservableObject {
             songOffset = songOffsets.offset(for: np.trackID)
         case .seeked:
             debugLog("偵測到拖動進度 → \(formatTime(np.progress))")
+            rescheduleTick()
         case .playStateChanged:
             debugLog(np.isPlaying ? "繼續播放" : "暫停")
             pushLiveActivity()
+            rescheduleTick()
         case .stale:
             debugLog("Spotify 進度沒有前進（\(formatTime(np.progress))），忽略並改用 /me/player 重試")
             useFullPlayer = true
@@ -449,6 +519,7 @@ final class AppModel: ObservableObject {
         }
         debugLog("歌詞：\(lyricsStatus)")
         tick()
+        rescheduleTick()
         pushLiveActivity()
     }
 
@@ -506,7 +577,7 @@ final class AppModel: ObservableObject {
     }
 
     private func updateIdleTimer() {
-        let disable = keepScreenOn && isForeground && (nowPlaying?.isPlaying ?? false)
+        let disable = isForeground && (focusModeActive || (keepScreenOn && (nowPlaying?.isPlaying ?? false)))
         if UIApplication.shared.isIdleTimerDisabled != disable {
             UIApplication.shared.isIdleTimerDisabled = disable
         }
@@ -575,9 +646,9 @@ final class AppModel: ObservableObject {
             guard let self, let next = await self.api.nextInQueue(), !Task.isCancelled,
                   next.trackID != self.nowPlaying?.trackID,
                   next.trackID != self.prefetchedTrackID else { return }
-            self.prefetchedTrackID = next.trackID
             let result = await self.lyricsService.lyrics(for: self.query(for: next))
             guard !Task.isCancelled else { return }
+            self.prefetchedTrackID = next.trackID
             debugLog("預先載入下一首：\(next.title)（\(result.shortDescription)）")
         }
     }
@@ -594,6 +665,8 @@ final class AppModel: ObservableObject {
             }
         }
         lastPollAt = now
+        guard now.timeIntervalSince(lastHeartbeatWrite) > 15 else { return }
+        lastHeartbeatWrite = now
         UserDefaults.standard.set(now.timeIntervalSince1970, forKey: Self.heartbeatKey)
         UserDefaults.standard.set(!isForeground, forKey: Self.heartbeatBackgroundKey)
     }

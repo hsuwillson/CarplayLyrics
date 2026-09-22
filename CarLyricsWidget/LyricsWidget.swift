@@ -9,7 +9,7 @@ struct LyricsEntry: TimelineEntry {
 
 struct LyricsProvider: TimelineProvider {
     func placeholder(in context: Context) -> LyricsEntry {
-        LyricsEntry(date: .now, line: "測試第一句")
+        LyricsEntry(date: .now, line: "CarLyrics")
     }
 
     func getSnapshot(in context: Context, completion: @escaping (LyricsEntry) -> Void) {

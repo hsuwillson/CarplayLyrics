@@ -27,6 +27,8 @@ final class DebugLog: ObservableObject {
         f.dateFormat = "MM-dd HH:mm:ss.SSS"
         return f
     }()
+    /// 檔案寫入放在背景佇列，不佔主執行緒
+    private let writer = LogFileWriter()
 
     func add(_ message: String) {
         let now = Date()
@@ -34,32 +36,57 @@ final class DebugLog: ObservableObject {
         if entries.count > 300 {
             entries.removeFirst(entries.count - 300)
         }
+        #if DEBUG
         print("[CarLyrics] \(message)")
-        appendToFile("\(formatter.string(from: now)) \(message)\n")
+        #endif
+        writer.append("\(formatter.string(from: now)) \(message)\n", to: fileURL, maxBytes: Self.maxFileBytes)
     }
 
     func clear() {
         entries.removeAll()
-        try? Data().write(to: fileURL)
+        writer.truncate(fileURL)
+    }
+}
+
+/// 在序列背景佇列寫紀錄檔；FileHandle 保持開啟，超過上限時只保留後半段
+private final class LogFileWriter: @unchecked Sendable {
+    private let queue = DispatchQueue(label: "CarLyrics.DebugLog", qos: .utility)
+    private var handle: FileHandle?
+    private var size = 0
+
+    func append(_ line: String, to url: URL, maxBytes: Int) {
+        guard let data = line.data(using: .utf8) else { return }
+        queue.async {
+            self.openIfNeeded(url)
+            if self.size + data.count > maxBytes {
+                try? self.handle?.close()
+                self.handle = nil
+                if let old = try? Data(contentsOf: url) {
+                    try? old.suffix(maxBytes / 2).write(to: url)
+                }
+                self.openIfNeeded(url)
+            }
+            try? self.handle?.write(contentsOf: data)
+            self.size += data.count
+        }
     }
 
-    private func appendToFile(_ line: String) {
-        guard let data = line.data(using: .utf8) else { return }
+    func truncate(_ url: URL) {
+        queue.async {
+            try? self.handle?.close()
+            self.handle = nil
+            try? Data().write(to: url)
+        }
+    }
+
+    private func openIfNeeded(_ url: URL) {
+        guard handle == nil else { return }
         let fm = FileManager.default
-        if !fm.fileExists(atPath: fileURL.path) {
-            try? data.write(to: fileURL)
-            return
+        if !fm.fileExists(atPath: url.path) {
+            fm.createFile(atPath: url.path, contents: nil)
         }
-        // 超過上限就只保留後半段
-        if let size = (try? fm.attributesOfItem(atPath: fileURL.path)[.size] as? Int), size > Self.maxFileBytes,
-           let old = try? Data(contentsOf: fileURL) {
-            try? old.suffix(Self.maxFileBytes / 2).write(to: fileURL)
-        }
-        if let handle = try? FileHandle(forWritingTo: fileURL) {
-            defer { try? handle.close() }
-            _ = try? handle.seekToEnd()
-            try? handle.write(contentsOf: data)
-        }
+        handle = try? FileHandle(forWritingTo: url)
+        size = Int((try? handle?.seekToEnd()) ?? 0)
     }
 }
 

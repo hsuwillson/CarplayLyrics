@@ -22,6 +22,14 @@ final class BackgroundKeeper {
     private(set) var lastRestartReason: String?
     private(set) var lastRestartAt: Date?
 
+    /// 目前被來電 / Siri 中斷中
+    private(set) var interrupted = false
+    /// 上次嘗試重啟的時間（節流用）
+    private var lastAttemptAt: Date?
+    private static let retryInterval: TimeInterval = 20
+    /// 中斷結束時通知 AppModel（重新計算閒置時間）
+    var onInterruptionEnded: (() -> Void)?
+
     private var observers: [NSObjectProtocol] = []
     private var engineObserver: NSObjectProtocol?
 
@@ -64,10 +72,13 @@ final class BackgroundKeeper {
         debugLog("背景音訊已停止")
     }
 
-    /// 由輪詢迴圈呼叫：應該在跑卻沒在跑就重啟
+    /// 由輪詢迴圈呼叫：應該在跑卻沒在跑就重啟。
+    /// 節流 20 秒，避免通話中每次輪詢都重啟失敗、洗掉除錯紀錄；
+    /// 中斷中也會定期重試，以免 `.ended` 通知沒送達時永遠不恢復。
     func ensureRunning() {
         guard wantsRunning, !isRunning else { return }
-        restart(reason: "檢查時發現未執行")
+        if let t = lastAttemptAt, Date().timeIntervalSince(t) < Self.retryInterval { return }
+        restart(reason: interrupted ? "中斷中，定期重試" : "檢查時發現未執行")
     }
 
     // MARK: - 內部
@@ -89,12 +100,16 @@ final class BackgroundKeeper {
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
             try session.setActive(true)
-            if !engine.isRunning { try engine.start() }
-            if !player.isPlaying, let silence {
+            let engineWasStopped = !engine.isRunning
+            if engineWasStopped { try engine.start() }
+            // 引擎曾停止時，player 的狀態不可靠 → 一律重新排程
+            if engineWasStopped || !player.isPlaying, let silence {
                 player.stop()
                 player.scheduleBuffer(silence, at: nil, options: .loops)
                 player.play()
             }
+            lastAttemptAt = nil
+            interrupted = false
             debugLog("背景音訊執行中")
         } catch {
             debugLog("背景音訊啟動失敗：\(error.localizedDescription)")
@@ -103,6 +118,7 @@ final class BackgroundKeeper {
 
     private func restart(reason: String, recreate: Bool = false) {
         guard wantsRunning else { return }
+        lastAttemptAt = Date()
         restartCount += 1
         lastRestartReason = reason
         lastRestartAt = Date()
@@ -133,10 +149,14 @@ final class BackgroundKeeper {
               let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
         switch type {
         case .began:
+            interrupted = true
             debugLog("音訊被中斷（例如來電、Siri）")
         case .ended:
+            interrupted = false
+            lastAttemptAt = nil
             // 我們是無聲 keep-alive，不論 shouldResume 都重啟（不會干擾其他 App）
             restart(reason: "中斷結束")
+            onInterruptionEnded?()
         @unknown default:
             break
         }

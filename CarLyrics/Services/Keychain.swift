@@ -37,7 +37,8 @@ enum Keychain {
         return (status == errSecSuccess ? result as? Data : nil, status)
     }
 
-    static func delete(account: String) {
-        _ = SecItemDelete(baseQuery(account) as CFDictionary)
+    @discardableResult
+    static func delete(account: String) -> OSStatus {
+        SecItemDelete(baseQuery(account) as CFDictionary)
     }
 }

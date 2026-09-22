@@ -8,6 +8,8 @@ extension UTType {
 /// 完整歌詞（卡拉 OK 式）：目前句放大、唱過的變淡；自動捲動到目前句，點某一句 → Spotify 跳到那個時間點
 struct FullLyricsView: View {
     @EnvironmentObject private var model: AppModel
+    /// 使用者最近一次手動捲動的時間；5 秒內不自動捲回目前句
+    @State private var lastUserScroll = Date.distantPast
 
     var body: some View {
         ZStack {
@@ -27,8 +29,13 @@ struct FullLyricsView: View {
                     .animation(.easeInOut(duration: 0.25), value: model.display.index)
                 }
                 .scrollIndicators(.hidden)
+                .onScrollPhaseChange { _, newPhase in
+                    if newPhase == .interacting || newPhase == .decelerating {
+                        lastUserScroll = Date()
+                    }
+                }
                 .onChange(of: model.display.index) { _, newIndex in
-                    guard let newIndex else { return }
+                    guard let newIndex, Date().timeIntervalSince(lastUserScroll) > 5 else { return }
                     withAnimation(.easeInOut(duration: 0.3)) {
                         proxy.scrollTo(newIndex, anchor: .center)
                     }
@@ -39,6 +46,7 @@ struct FullLyricsView: View {
                 .safeAreaInset(edge: .bottom) {
                     FullLyricsBar {
                         guard let i = model.display.index else { return }
+                        lastUserScroll = .distantPast
                         withAnimation(.easeInOut(duration: 0.3)) {
                             proxy.scrollTo(i, anchor: .center)
                         }

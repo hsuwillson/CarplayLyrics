@@ -135,7 +135,10 @@ final class SpotifyAuth: NSObject, ObservableObject {
     func logout() {
         keychainLocked = false
         tokens = nil
-        Keychain.delete(account: Self.keychainAccount)
+        let status = Keychain.delete(account: Self.keychainAccount)
+        if status != errSecSuccess && status != errSecItemNotFound {
+            debugLog("Keychain 刪除失敗（\(status)），下次啟動可能仍是登入狀態")
+        }
         isLoggedIn = false
     }
 

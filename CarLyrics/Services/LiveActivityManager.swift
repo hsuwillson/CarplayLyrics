@@ -26,8 +26,12 @@ final class LiveActivityManager {
     /// 內容沒變時，每隔這麼久重送一次（延長 staleDate）
     private static let keepAliveInterval: TimeInterval = 45
 
+    /// `.stale` 只是太久沒更新，仍然可以更新（更新後會回到 `.active`）
     var isActive: Bool {
-        activity?.activityState == .active
+        switch activity?.activityState {
+        case .active, .stale: return true
+        default: return false
+        }
     }
 
     var stateDescription: String {
@@ -39,7 +43,8 @@ final class LiveActivityManager {
     func appBecameActive() {
         startBlockedUntilForeground = false
         let existing = Activity<LyricsActivityAttributes>.activities
-        if activity == nil, let first = existing.first(where: { $0.activityState == .active }) {
+        if activity == nil,
+           let first = existing.first(where: { $0.activityState == .active || $0.activityState == .stale }) {
             activity = first
             observe(first)
             debugLog("接手既有的 Live Activity")

@@ -18,8 +18,12 @@ struct FocusLyricsView: View {
             .padding(.top, 12)
             .padding(.bottom, 16)
         }
-        .preferredColorScheme(.dark)
+        // 只影響這個畫面，不會殘留到關閉後的主畫面
+        .environment(\.colorScheme, .dark)
         .statusBarHidden(true)
+        // 專注模式是放在車架上看的：螢幕不自動關閉
+        .onAppear { model.focusModeActive = true }
+        .onDisappear { model.focusModeActive = false }
     }
 }
 

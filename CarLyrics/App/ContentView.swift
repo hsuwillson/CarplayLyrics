@@ -58,21 +58,34 @@ private struct MainScreen: View {
     @ViewBuilder
     private var content: some View {
         if auth.isLoggedIn {
-            VStack(spacing: 16) {
-                ConnectionStatusBar()
-                NowPlayingHero()
-                LyricsStage()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                OffsetControl()
-                ActionRow(showPicker: $showPicker, showFocus: $showFocus)
+            // 小螢幕（iPhone SE）或字體調大時放不下 → 改成可捲動，底部按鈕不會被擠出畫面
+            ViewThatFits(in: .vertical) {
+                mainLayout
+                ScrollView {
+                    mainLayout
+                }
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 4)
-            .padding(.bottom, 12)
             .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
         } else {
             WelcomeView()
         }
+    }
+}
+
+private extension ContentView {
+    var mainLayout: some View {
+        VStack(spacing: 16) {
+            ConnectionStatusBar()
+            NowPlayingHero()
+            LyricsStage()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .layoutPriority(1)
+            OffsetControl()
+            ActionRow(showPicker: $showPicker, showFocus: $showFocus)
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 4)
+        .padding(.bottom, 12)
     }
 }
 
@@ -350,6 +363,8 @@ private struct OffsetControl: View {
                 Text(usePerSong ? "這首歌再提前" : "歌詞提前（全部）")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
             }
             .frame(maxWidth: .infinity)
             StepButton(symbol: "plus") { adjust(Self.step) }
@@ -360,7 +375,7 @@ private struct OffsetControl: View {
                     Text("這首").tag(true)
                 }
                 .pickerStyle(.segmented)
-                .frame(width: 112)
+                .frame(width: 100)
             }
         }
         .padding(.horizontal, 10)
