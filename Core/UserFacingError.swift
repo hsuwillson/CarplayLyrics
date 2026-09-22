@@ -2,7 +2,7 @@ import Foundation
 
 /// 顯示給使用者看的錯誤：中文標題、說明與建議動作。
 /// 原始的英文錯誤只寫進診斷紀錄，不直接放上畫面。
-enum UserFacingError: Equatable, Sendable {
+enum UserFacingError: Error, Equatable, Sendable {
     case offline
     case timeout
     case spotifyUnauthorized
