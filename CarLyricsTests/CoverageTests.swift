@@ -352,4 +352,18 @@ final class MiscCoverageTests: XCTestCase {
         XCTAssertEqual(e.update(PlaybackSnapshot(trackID: "a", progress: 5, duration: 10, isPlaying: false,
                                                  timestamp: t0.addingTimeInterval(3))), .none)
     }
+
+    func testRemainingPartialRegions() {
+        // 描述檔沒有 Entitlements
+        let xml = #"<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>Name</key><string>x</string></dict></plist>"#
+        XCTAssertEqual(ProvisioningProfile(data: Data(xml.utf8))?.appGroups, [])
+        // 非 ASCII 數字的小數（isNumber 但 Double 解析不了）→ 小數當 0
+        XCTAssertEqual(LRCParser.parseTimestamp("00:01.٣"), 1)
+        // 第一張圖有寬度、第二張沒有
+        let imgs = [CurrentlyPlayingResponse.Image(url: "https://example.com/y.jpg", width: 60, height: 60),
+                    CurrentlyPlayingResponse.Image(url: "https://example.com/x.jpg", width: nil, height: nil)]
+        XCTAssertEqual(SpotifyResponseParser.pick(imgs, target: 64)?.absoluteString, "https://example.com/y.jpg")
+        // 沒有任何歌詞
+        XCTAssertEqual(LyricsDisplay(lines: [], position: 3), .empty)
+    }
 }

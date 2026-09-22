@@ -127,22 +127,22 @@ enum SpotifyResponseParser {
             let kind: NonMusicKind = type == "ad" ? .ad : type == "episode" ? .episode : .unknown
             return .nonMusic(kind, isPlaying: r.is_playing)
         }
-        return .playing(nowPlaying(item, progressMs: r.progress_ms ?? 0, isPlaying: r.is_playing),
+        return .playing(nowPlaying(item, id: id, progressMs: r.progress_ms ?? 0, isPlaying: r.is_playing),
                         measuredAt: measuredAt, sentAt: sentAt)
     }
 
     /// 解析 GET /me/player/queue：回傳佇列的第一首
     static func parseQueueFirst(_ data: Data) -> NowPlaying? {
         guard let r = try? JSONDecoder().decode(QueueResponse.self, from: data),
-              let item = r.queue.first, item.id != nil else { return nil }
-        return nowPlaying(item, progressMs: 0, isPlaying: false)
+              let item = r.queue.first, let id = item.id else { return nil }
+        return nowPlaying(item, id: id, progressMs: 0, isPlaying: false)
     }
 
-    private static func nowPlaying(_ item: CurrentlyPlayingResponse.Item, progressMs: Int, isPlaying: Bool) -> NowPlaying {
+    private static func nowPlaying(_ item: CurrentlyPlayingResponse.Item, id: String, progressMs: Int, isPlaying: Bool) -> NowPlaying {
         let artists = item.artists?.map(\.name) ?? []
         let images = item.album?.images ?? []
         return NowPlaying(
-            trackID: item.id ?? "",
+            trackID: id,
             title: item.name,
             artist: artists.joined(separator: ", "),
             primaryArtist: artists.first ?? "",
