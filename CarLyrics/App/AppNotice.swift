@@ -35,7 +35,6 @@ struct AppNotice: Equatable, Identifiable {
             switch error.action {
             case .relogin: return .relogin
             case .retry: return .retry
-            case .openSettings: return .openSettings
             case .none: return nil
             }
         }()

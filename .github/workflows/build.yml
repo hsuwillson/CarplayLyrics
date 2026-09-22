@@ -46,14 +46,33 @@ jobs:
             exit "$status"
           fi
 
-      - name: Coverage summary (Core)
+      - name: Coverage (Core)
         if: success()
         continue-on-error: true
         run: |
-          echo "## 單元測試覆蓋率（Core）" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          xcrun xccov view --report --only-targets TestResults.xcresult | head -20 >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          xcrun xccov view --report --json TestResults.xcresult > cov.json
+          python3 - <<'PY'
+          import json, re, subprocess, os
+          d = json.load(open("cov.json"))
+          summary = open(os.environ["GITHUB_STEP_SUMMARY"], "a")
+          summary.write("## 單元測試覆蓋率（Core）\n\n| 檔案 | 覆蓋率 |\n|---|---|\n")
+          total_cov = total_exe = 0
+          for t in d["targets"]:
+              for f in t["files"]:
+                  if "/Core/" not in f["path"]:
+                      continue
+                  total_cov += f["coveredLines"]; total_exe += f["executableLines"]
+                  pct = f["lineCoverage"] * 100
+                  summary.write(f"| {f['name']} | {pct:.1f}% |\n")
+                  if f["coveredLines"] < f["executableLines"]:
+                      out = subprocess.run(["xcrun", "xccov", "view", "--archive", "--file", f["path"], "TestResults.xcresult"],
+                                           capture_output=True, text=True).stdout
+                      miss = [m.group(1) for m in (re.match(r"^\s*(\d+):\s*0\b", l) for l in out.splitlines()) if m]
+                      print(f"::warning::覆蓋率 {f['name']} {pct:.1f}%，未執行的行：{','.join(miss[:60])}")
+          pct = 100 * total_cov / max(total_exe, 1)
+          summary.write(f"\n**Core 合計：{pct:.2f}%（{total_cov}/{total_exe} 行）**\n")
+          print(f"::notice::Core 覆蓋率 {pct:.2f}%（{total_cov}/{total_exe} 行）")
+          PY
 
       - name: SwiftLint (warnings only)
         continue-on-error: true

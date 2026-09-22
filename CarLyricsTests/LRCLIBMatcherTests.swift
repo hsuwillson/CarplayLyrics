@@ -23,7 +23,8 @@ final class LRCLIBMatcherTests: XCTestCase {
     }
 
     func testDecodeJSON() throws {
-        let json = #"{"id":7,"trackName":"測試歌名","artistName":"測試歌手","albumName":"測試專輯","duration":180.5,"instrumental":false,"plainLyrics":"測試","syncedLyrics":"[00:01.00]測試"}"#
+        let json = #"{"id":7,"trackName":"測試歌名","artistName":"測試歌手","albumName":"測試專輯","duration":180.5,"#
+            + #""instrumental":false,"plainLyrics":"測試","syncedLyrics":"[00:01.00]測試"}"#
         let t = try JSONDecoder().decode(LRCLIBTrack.self, from: Data(json.utf8))
         XCTAssertEqual(t.id, 7)
         XCTAssertTrue(t.hasSynced)

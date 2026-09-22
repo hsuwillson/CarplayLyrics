@@ -51,7 +51,8 @@ final class SpotifyDTOTests: XCTestCase {
     }
 
     func testLocalFileWithoutIDIsNothing() throws {
-        let r = try parse(#"{"is_playing": true, "currently_playing_type": "track", "item": {"id": null, "name": "本機", "duration_ms": 1000}}"#)
+        let r = try parse(#"{"is_playing": true, "currently_playing_type": "track", "#
+                          + #""item": {"id": null, "name": "本機", "duration_ms": 1000}}"#)
         XCTAssertEqual(r, .nothing)
     }
 

@@ -17,7 +17,7 @@ enum UserFacingError: Equatable, Sendable {
     case unknown(String)
 
     enum Action: Equatable, Sendable {
-        case relogin, retry, openSettings, none
+        case relogin, retry, none
     }
 
     init(_ error: Error) {
@@ -100,7 +100,6 @@ enum UserFacingError: Equatable, Sendable {
         switch action {
         case .relogin: return "重新登入"
         case .retry: return "重試"
-        case .openSettings: return "開啟設定"
         case .none: return nil
         }
     }
