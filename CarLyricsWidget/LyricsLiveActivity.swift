@@ -2,18 +2,19 @@ import ActivityKit
 import SwiftUI
 import WidgetKit
 
-/// 歌詞 Live Activity
-/// - 鎖定畫面：歌名列 + 目前句（大字、最多兩行）+ 下一句
-/// - CarPlay / Apple Watch：`.small` activity family（iOS 26 CarPlay 使用這個尺寸），只放目前句 + 下一句
-/// - 靈動島：compact 顯示目前句，expanded 顯示目前句 + 下一句
+/// 歌詞即時動態
+/// - 鎖定畫面：封面 + 歌名列 + 目前句（大字、最多兩行）+ 下一句 + 系統自己推進的進度條
+/// - CarPlay / Apple Watch：`.small` activity family（iOS 26 CarPlay 使用這個尺寸），目前句 + 下一句 + 細進度條
+/// - 動態島：compact 顯示目前句，expanded 顯示目前句 + 下一句
 struct LyricsLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: LyricsActivityAttributes.self) { context in
             LyricsActivityView(state: context.state, isStale: context.isStale)
+                .widgetURL(URL(string: "carlyrics://focus"))
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    PlayingIcon(isPlaying: context.state.isPlaying)
+                    ActivityArtwork(file: context.state.artworkFile, isPlaying: context.state.isPlaying, size: 36)
                         .padding(.leading, 4)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
@@ -32,10 +33,12 @@ struct LyricsLiveActivity: Widget {
                 Text(context.state.currentLine)
                     .font(.caption2)
                     .lineLimit(1)
+                    .minimumScaleFactor(0.7)
                     .frame(maxWidth: 110)
             } minimal: {
                 PlayingIcon(isPlaying: context.state.isPlaying)
             }
+            .widgetURL(URL(string: "carlyrics://focus"))
         }
         .supplementalActivityFamilies([.small])
     }
@@ -51,10 +54,52 @@ private struct PlayingIcon: View {
         Image(systemName: isPlaying ? "music.note" : "pause.fill")
             .font(.caption.weight(.semibold))
             .foregroundStyle(isPlaying ? Color.green : Color.secondary)
+            .accessibilityLabel(isPlaying ? "播放中" : "已暫停")
     }
 }
 
-/// 靈動島展開區：目前句 + 下一句
+/// 小張封面（App Group）；沒有時顯示播放圖示
+private struct ActivityArtwork: View {
+    let file: String?
+    let isPlaying: Bool
+    var size: CGFloat = 40
+
+    var body: some View {
+        if let image = SharedArtwork.image(named: file) {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(width: size, height: size)
+                .clipShape(RoundedRectangle(cornerRadius: size * 0.2, style: .continuous))
+                .accessibilityHidden(true)
+        } else {
+            PlayingIcon(isPlaying: isPlaying)
+                .frame(width: size, height: size)
+        }
+    }
+}
+
+/// 系統自己推進的進度條（不需要 App 更新）
+private struct ActivityProgress: View {
+    let state: LyricsActivityAttributes.ContentState
+
+    var body: some View {
+        if let interval = state.playbackInterval {
+            ProgressView(timerInterval: interval, countsDown: false) {
+                EmptyView()
+            } currentValueLabel: {
+                EmptyView()
+            }
+            .progressViewStyle(.linear)
+            .tint(.green)
+        }
+    }
+}
+
+/// 背景更新被系統暫停時的說明
+private let staleMessage = "鎖定畫面暫停更新 · 打開 App 或看小工具"
+
+/// 動態島展開區：目前句 + 下一句
 private struct ExpandedLyrics: View {
     let state: LyricsActivityAttributes.ContentState
     let isStale: Bool
@@ -68,7 +113,7 @@ private struct ExpandedLyrics: View {
                 .multilineTextAlignment(.center)
                 .foregroundStyle(isStale ? Color.secondary : Color.primary)
             if isStale {
-                Text("歌詞未更新，請打開 CarLyrics")
+                Text(staleMessage)
                     .font(.caption)
                     .foregroundStyle(.orange)
                     .lineLimit(1)
@@ -108,6 +153,8 @@ private struct SmallActivityView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
+            ActivityProgress(state: state)
+                .frame(height: 4)
             Text(state.currentLine)
                 .font(.system(size: 22, weight: .bold, design: .rounded))
                 .lineLimit(2)
@@ -115,7 +162,7 @@ private struct SmallActivityView: View {
                 .foregroundStyle(isStale ? Color.secondary : Color.primary)
             Spacer(minLength: 0)
             if isStale {
-                Text("歌詞未更新，請打開 CarLyrics")
+                Label("未更新", systemImage: "exclamationmark.triangle.fill")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.orange)
                     .lineLimit(1)
@@ -143,22 +190,26 @@ private struct LockScreenActivityView: View {
     let isStale: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            header
-            Text(state.currentLine)
-                .font(.system(.title2, design: .rounded, weight: .bold))
-                .lineLimit(2)
-                .minimumScaleFactor(0.7)
-                .foregroundStyle(isStale ? Color.secondary : Color.primary)
-            if isStale {
-                Text("歌詞未更新，請打開 CarLyrics")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.orange)
-            } else if !state.nextLine.isEmpty {
-                Text(state.nextLine)
-                    .font(.headline)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+        HStack(alignment: .top, spacing: 12) {
+            ActivityArtwork(file: state.artworkFile, isPlaying: state.isPlaying, size: 44)
+            VStack(alignment: .leading, spacing: 6) {
+                header
+                Text(state.currentLine)
+                    .font(.system(.title2, design: .rounded, weight: .bold))
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.7)
+                    .foregroundStyle(isStale ? Color.secondary : Color.primary)
+                if isStale {
+                    Text(staleMessage)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.orange)
+                } else if !state.nextLine.isEmpty {
+                    Text(state.nextLine)
+                        .font(.headline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                ActivityProgress(state: state)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

@@ -32,6 +32,8 @@ jobs:
             -only-testing:CarLyricsTests \
             -destination "id=$SIM_ID" \
             -derivedDataPath build-tests \
+            -enableCodeCoverage YES \
+            -resultBundlePath TestResults.xcresult \
             CODE_SIGNING_ALLOWED=NO \
             > test.log 2>&1 && status=0 || status=$?
           grep -E "error:|Test Case .* (passed|failed)|Executed|TEST" test.log || true
@@ -43,6 +45,22 @@ jobs:
             tail -25 test.log | cut -c1-300 | sed 's/^/::notice::/'
             exit "$status"
           fi
+
+      - name: Coverage summary (Core)
+        if: success()
+        continue-on-error: true
+        run: |
+          echo "## 單元測試覆蓋率（Core）" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          xcrun xccov view --report --only-targets TestResults.xcresult | head -20 >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: SwiftLint (warnings only)
+        continue-on-error: true
+        timeout-minutes: 5
+        run: |
+          which swiftlint || brew install swiftlint
+          swiftlint lint --quiet --reporter github-actions-logging || true
 
       - name: Build (no signing)
         run: |
@@ -70,7 +88,8 @@ jobs:
         run: |
           APP=build/Build/Products/Release-iphoneos/CarLyrics.app
           plutil -replace CLGitSHA -string "${{ github.sha }}" "$APP/Info.plist"
-          plutil -p "$APP/Info.plist" | grep -E "CFBundleVersion|CLGitSHA"
+          plutil -replace CLBuildDate -string "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$APP/Info.plist"
+          plutil -p "$APP/Info.plist" | grep -E "CFBundleVersion|CLGitSHA|CLBuildDate"
 
       # 用 ad-hoc 簽章把 entitlements（App Group）寫進執行檔，
       # Sideloadly 重簽時才會幫你註冊 App Group。
@@ -135,7 +154,7 @@ jobs:
           gh release create latest-build CarLyrics.ipa CarLyrics-noappgroup.ipa CarLyrics-minimal.ipa \
             --prerelease \
             --title "Latest build #${{ github.run_number }}" \
-            --notes "Commit ${{ github.sha }}（未簽署，請用 Sideloadly 安裝）" \
+            --notes "Commit ${{ github.sha }}（未簽署，請用 AltStore / AltServer 安裝）" \
             --target "${{ github.sha }}"
 
       - uses: actions/upload-artifact@v5
@@ -151,5 +170,6 @@ jobs:
           path: |
             xcodebuild.log
             test.log
+            TestResults.xcresult
           if-no-files-found: ignore
           retention-days: 7

@@ -12,13 +12,18 @@ struct LyricLine: Codable, Equatable, Sendable {
 /// - 支援一行多個時間碼：`[00:10.00][00:40.00]同一句`
 /// - 支援 `[offset:+500]`（毫秒；正值代表歌詞提早出現）
 /// - 忽略 `[ar:]`、`[ti:]` 等 metadata 標籤
+/// - 去掉加強型 LRC 的逐字時間碼 `<mm:ss.xx>`、UTF-8 BOM
+/// - 預設去掉開頭的製作名單（作詞：… / 作曲：…），避免前奏顯示「作詞」
 enum LRCParser {
-    static func parse(_ lrc: String) -> [LyricLine] {
+    static func parse(_ lrc: String, dropCredits: Bool = true) -> [LyricLine] {
         var offset: TimeInterval = 0
         var result: [LyricLine] = []
+        var source = lrc
+        if source.hasPrefix("\u{FEFF}") { source.removeFirst() }
 
-        for rawLine in lrc.components(separatedBy: .newlines) {
+        for rawLine in source.components(separatedBy: .newlines) {
             var rest = Substring(rawLine.trimmingCharacters(in: .whitespaces))
+            if rest.hasPrefix("\u{FEFF}") { rest = rest.dropFirst() }
             var times: [TimeInterval] = []
 
             while rest.first == "[", let close = rest.firstIndex(of: "]") {
@@ -32,16 +37,35 @@ enum LRCParser {
             }
 
             guard !times.isEmpty else { continue }
-            let text = rest.trimmingCharacters(in: .whitespaces)
+            let text = cleanText(String(rest))
             for t in times {
                 result.append(LyricLine(time: t, text: text))
             }
         }
 
         // offset 標籤可能出現在任何位置，最後統一套用
-        return result
+        var lines = result
             .map { LyricLine(time: max(0, $0.time - offset), text: $0.text) }
             .sorted { $0.time < $1.time }
+        if dropCredits, let firstLyric = lines.firstIndex(where: { !isCredit($0.text) }) {
+            lines.removeFirst(firstLyric)
+        }
+        return lines
+    }
+
+    /// 去掉逐字時間碼、前後空白
+    static func cleanText(_ text: String) -> String {
+        text.replacingOccurrences(of: #"<\d{1,3}:\d{2}(?:[.:]\d{1,3})?>"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"\s{2,}"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespaces)
+    }
+
+    private static let creditPattern =
+        #"^\s*(作詞|作词|作曲|編曲|编曲|詞|词|曲|監製|监制|製作人|制作人|演唱|原唱|Lyrics|Lyricist|Composer|Arranger|Producer|Written by)\s*[:：]"#
+
+    /// 製作名單行（只在歌詞開頭移除）
+    static func isCredit(_ text: String) -> Bool {
+        text.range(of: creditPattern, options: [.regularExpression, .caseInsensitive]) != nil
     }
 
     /// "mm:ss.xx" → 秒

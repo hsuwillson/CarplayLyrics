@@ -95,6 +95,8 @@ common = {
     "CURRENT_PROJECT_VERSION": "1",
     "GENERATE_INFOPLIST_FILE": "YES",
     "SWIFT_EMIT_LOC_STRINGS": "YES",
+    # 嚴格並行檢查只當警告，逐步清理
+    "SWIFT_STRICT_CONCURRENCY": "complete",
 }
 
 
@@ -140,8 +142,9 @@ a_list = target_configs("app", {
     "PRODUCT_NAME": "$(TARGET_NAME)",
     "INFOPLIST_FILE": "Config/CarLyrics-Info.plist",
     "INFOPLIST_KEY_CFBundleDisplayName": "CarLyrics",
-    "INFOPLIST_KEY_UILaunchScreen_Generation": "YES",
-    "INFOPLIST_KEY_UISupportedInterfaceOrientations": "UIInterfaceOrientationPortrait",
+    # 啟動畫面與方向寫在 Config/CarLyrics-Info.plist（UILaunchScreen、橫向只在專注模式開放）
+    "ASSETCATALOG_COMPILER_APPICON_NAME": "AppIcon",
+    "ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME": "AccentColor",
     "INFOPLIST_KEY_UIApplicationSceneManifest_Generation": "YES",
     "CODE_SIGN_ENTITLEMENTS": "Config/CarLyrics.entitlements",
     "ENABLE_PREVIEWS": "YES",
@@ -203,7 +206,7 @@ objs[oid("project")] = {
                              t_tests: {"CreatedOnToolsVersion": "26.0"}},
     },
     "buildConfigurationList": p_list,
-    "developmentRegion": "en",
+    "developmentRegion": "zh-Hant",
     "hasScannedForEncodings": "0",
     "knownRegions": ["en", "Base", "zh-Hant"],
     "mainGroup": g_main,

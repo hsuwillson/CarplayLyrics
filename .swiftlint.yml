@@ -1,0 +1,14 @@
+# 只開幾條實用規則；CI 上只當警告，不會讓建置失敗
+only_rules:
+  - unused_import
+  - trailing_whitespace
+  - line_length
+  - force_cast
+  - force_try
+line_length:
+  warning: 140
+  ignores_comments: true
+excluded:
+  - build
+  - build-tests
+  - CarLyrics.xcodeproj

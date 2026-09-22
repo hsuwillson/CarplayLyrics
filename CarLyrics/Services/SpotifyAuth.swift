@@ -10,40 +10,26 @@ struct SpotifyTokens: Codable {
     var scope: String?
 }
 
-enum SpotifyAuthError: LocalizedError {
-    case notLoggedIn
-    case cancelled
-    case invalidCallback(String)
-    case stateMismatch
-    case tokenRequestFailed(Int, String)
-
-    var errorDescription: String? {
-        switch self {
-        case .notLoggedIn: return "尚未登入 Spotify"
-        case .cancelled: return "已取消登入"
-        case .invalidCallback(let m): return "登入回傳異常：\(m)"
-        case .stateMismatch: return "登入驗證失敗（state 不符）"
-        case .tokenRequestFailed(let code, let body): return "取得 token 失敗（HTTP \(code)）\(body)"
-        }
-    }
-}
-
 /// Spotify OAuth：Authorization Code + PKCE（不使用 Client Secret）
 @MainActor
-final class SpotifyAuth: NSObject, ObservableObject {
-    @Published private(set) var isLoggedIn: Bool
+@Observable
+final class SpotifyAuth: NSObject {
+    private(set) var isLoggedIn: Bool
+    /// 目前 token 的權限（畫面據此判斷能不能控制播放）
+    private(set) var grantedScope: String?
 
-    private var tokens: SpotifyTokens?
-    private var session: ASWebAuthenticationSession?
-    private var refreshTask: Task<SpotifyTokens, Error>?
+    @ObservationIgnored private var tokens: SpotifyTokens?
+    @ObservationIgnored private var session: ASWebAuthenticationSession?
+    @ObservationIgnored private var refreshTask: Task<SpotifyTokens, Error>?
     private static let keychainAccount = "spotify.tokens"
     /// 重開機後尚未解鎖，Keychain 暫時讀不到 → 稍後重讀，不要當成「未登入」
-    private var keychainLocked = false
+    @ObservationIgnored private var keychainLocked = false
 
     override init() {
         let (data, status) = Keychain.load(account: Self.keychainAccount)
         let saved = data.flatMap { try? JSONDecoder().decode(SpotifyTokens.self, from: $0) }
         tokens = saved
+        grantedScope = saved?.scope
         keychainLocked = status == errSecInteractionNotAllowed
         isLoggedIn = saved != nil || keychainLocked
         super.init()
@@ -55,6 +41,7 @@ final class SpotifyAuth: NSObject, ObservableObject {
         let (data, status) = Keychain.load(account: Self.keychainAccount)
         if let t = data.flatMap({ try? JSONDecoder().decode(SpotifyTokens.self, from: $0) }) {
             tokens = t
+            grantedScope = t.scope
             keychainLocked = false
             isLoggedIn = true
             debugLog("Keychain 已解鎖，重新讀取登入資訊")
@@ -119,7 +106,7 @@ final class SpotifyAuth: NSObject, ObservableObject {
             "code_verifier": verifier,
         ])
         guard let refresh = response.refresh_token else {
-            throw SpotifyAuthError.tokenRequestFailed(200, "缺少 refresh_token")
+            throw SpotifyAuthError.missingRefreshToken
         }
         store(SpotifyTokens(accessToken: response.access_token,
                             refreshToken: refresh,
@@ -129,12 +116,13 @@ final class SpotifyAuth: NSObject, ObservableObject {
 
     /// 目前的 token 是否包含某個權限
     func hasScope(_ scope: String) -> Bool {
-        (tokens?.scope ?? "").split(separator: " ").contains { $0 == scope }
+        (grantedScope ?? "").split(separator: " ").contains { $0 == scope }
     }
 
     func logout() {
         keychainLocked = false
         tokens = nil
+        grantedScope = nil
         let status = Keychain.delete(account: Self.keychainAccount)
         if status != errSecSuccess && status != errSecItemNotFound {
             debugLog("Keychain 刪除失敗（\(status)），下次啟動可能仍是登入狀態")
@@ -191,10 +179,11 @@ final class SpotifyAuth: NSObject, ObservableObject {
 
     private func store(_ t: SpotifyTokens) {
         tokens = t
+        if grantedScope != t.scope { grantedScope = t.scope }
         if let data = try? JSONEncoder().encode(t) {
             do { try Keychain.save(data, account: Self.keychainAccount) } catch { debugLog("Keychain 寫入失敗：\(error)") }
         }
-        isLoggedIn = true
+        if !isLoggedIn { isLoggedIn = true }
     }
 
     private struct TokenResponse: Decodable {

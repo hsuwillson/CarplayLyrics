@@ -10,7 +10,7 @@ import Foundation
 /// - 中斷（來電、Siri）結束通知不一定會送達 → 由 `ensureRunning()`（每次輪詢呼叫）補救
 /// - media services reset → 重新建立 engine / player
 @MainActor
-final class BackgroundKeeper {
+final class SilentAudioKeeper {
     private var engine = AVAudioEngine()
     private var player = AVAudioPlayerNode()
     private let format = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 2)!

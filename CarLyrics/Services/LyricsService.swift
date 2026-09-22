@@ -1,87 +1,56 @@
 import Foundation
 
-struct TrackQuery {
-    let trackID: String
-    let title: String
-    let artist: String
-    let album: String
-    let duration: TimeInterval
+/// 歌詞來源（方便以假物件測試 / 替換）
+protocol LyricsProviding: Sendable {
+    func lyrics(for query: TrackQuery) async -> LyricsResult?
+    func candidates(for query: TrackQuery) async -> [LRCLIBTrack]
+    func search(text: String, duration: TimeInterval) async -> [LRCLIBTrack]
+    func hasOverride(_ trackID: String) async -> Bool
+    func setOverride(_ result: LyricsResult, trackID: String) async
+    func removeOverride(_ trackID: String) async
+    func clearCache() async
 }
 
-enum LyricsResult: Codable, Equatable {
-    case synced(String)
-    case plain(String)
-    case instrumental
-    case notFound
-    case failed(String)
+/// 從 LRCLIB 取得歌詞，並以 Spotify 曲目 ID 為 key 快取在本機。
+/// 是 actor：搜尋最多十幾個請求、JSON 解碼與檔案讀寫都不在主執行緒。
+actor LyricsService: LyricsProviding {
+    private let cache: LyricsCache
+    private let userAgent = "CarLyrics/0.2 (personal use; https://github.com/hsuwillson/CarplayLyrics)"
 
-    var shortDescription: String {
-        switch self {
-        case .synced: return "同步歌詞"
-        case .plain: return "未同步歌詞"
-        case .instrumental: return "純音樂"
-        case .notFound: return "找不到"
-        case .failed: return "失敗"
-        }
-    }
-}
-
-/// 從 LRCLIB 取得歌詞，並以 Spotify 曲目 ID 為 key 快取在本機
-@MainActor
-final class LyricsService {
-    private struct CacheEntry: Codable {
-        let result: LyricsResult
-        let savedAt: Date
+    init(cache: LyricsCache = .standard()) {
+        self.cache = cache
     }
 
-    private let cacheDirectory: URL
-    /// 手動選擇 / 匯入的歌詞屬於使用者資料，放 Application Support（不會被系統清掉）
-    private let overrideDirectory: URL
-    private let userAgent = "CarLyrics/0.1 (personal use; https://github.com/hsuwillson/CarplayLyrics)"
-
-    init() {
-        let fm = FileManager.default
-        let caches = fm.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-        cacheDirectory = caches.appendingPathComponent("lyrics-v2", isDirectory: true)
-        let support = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        overrideDirectory = support.appendingPathComponent("lyrics-overrides", isDirectory: true)
-        try? fm.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
-        try? fm.createDirectory(at: overrideDirectory, withIntermediateDirectories: true)
-    }
-
-    func lyrics(for query: TrackQuery) async -> LyricsResult {
-        if let manual = loadOverride(query.trackID) {
+    /// 回傳 nil 代表查詢途中被取消（換歌 / 使用者手動選擇），呼叫端應忽略
+    func lyrics(for query: TrackQuery) async -> LyricsResult? {
+        if let manual = cache.override(query.trackID) {
             debugLog("使用手動指定的歌詞")
             return manual
         }
-        if let cached = loadCache(query.trackID) {
+        if let cached = cache.cached(query.trackID) {
             debugLog("歌詞來自快取")
             return cached
         }
         do {
             let result = try await fetch(query)
-            // 搜尋途中被取消（換歌 / 使用者手動選擇）→ 不寫快取
-            guard !Task.isCancelled else { return .failed("cancelled") }
-            saveCache(result, trackID: query.trackID)
+            guard !Task.isCancelled else { return nil }
+            cache.save(result, trackID: query.trackID)
             return result
+        } catch is CancellationError {
+            return nil
+        } catch let error as URLError where error.code == .cancelled {
+            return nil
         } catch {
             // 網路錯誤不快取，下次換歌回來會重試
+            debugLog("歌詞查詢失敗：\(error.localizedDescription)")
             return .failed(error.localizedDescription)
         }
     }
 
-    func hasOverride(_ trackID: String) -> Bool {
-        loadOverride(trackID) != nil
-    }
-
-    func removeOverride(_ trackID: String) {
-        try? FileManager.default.removeItem(at: overrideDirectory.appendingPathComponent("\(trackID).json"))
-    }
-
-    func clearCache() {
-        try? FileManager.default.removeItem(at: cacheDirectory)
-        try? FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
-    }
+    func hasOverride(_ trackID: String) -> Bool { cache.override(trackID) != nil }
+    func setOverride(_ result: LyricsResult, trackID: String) { cache.setOverride(result, trackID: trackID) }
+    func removeOverride(_ trackID: String) { cache.removeOverride(trackID) }
+    func clearCache() { cache.clear() }
 
     // MARK: 網路
 
@@ -94,7 +63,7 @@ final class LyricsService {
             URLQueryItem(name: "duration", value: String(Int(q.duration.rounded()))),
         ]
         let (data, status) = try await request(get.url!)
-        if status == 200, let t = try? JSONDecoder().decode(LRCLIBTrack.self, from: data), let r = result(from: t) {
+        if status == 200, let t = try? JSONDecoder().decode(LRCLIBTrack.self, from: data), let r = LyricsResult(track: t) {
             debugLog("LRCLIB /get 命中")
             return r
         }
@@ -115,7 +84,7 @@ final class LyricsService {
                 let list = (try? JSONDecoder().decode([LRCLIBTrack].self, from: sdata)) ?? []
                 let label = items.map { "\($0.name)=\($0.value ?? "")" }.joined(separator: "&")
                 debugLog("LRCLIB search \(label)：\(list.count) 筆")
-                if let best = LRCLIBMatcher.bestMatch(list, duration: q.duration), let r = result(from: best) {
+                if let best = LRCLIBMatcher.bestMatch(list, duration: q.duration), let r = LyricsResult(track: best) {
                     debugLog("採用 LRCLIB #\(best.id)：\(best.trackName ?? "") – \(best.artistName ?? "")")
                     return r
                 }
@@ -142,32 +111,11 @@ final class LyricsService {
         LRCLIBMatcher.rank(await search(items: [URLQueryItem(name: "q", value: text)]), duration: duration)
     }
 
-    /// 手動指定某首歌要用的歌詞（優先於自動搜尋與快取）
-    func setOverride(_ result: LyricsResult, trackID: String) {
-        let entry = CacheEntry(result: result, savedAt: Date())
-        if let data = try? JSONEncoder().encode(entry) {
-            try? data.write(to: overrideDirectory.appendingPathComponent("\(trackID).json"), options: .atomic)
-        }
-    }
-
-    private func loadOverride(_ trackID: String) -> LyricsResult? {
-        guard let data = try? Data(contentsOf: overrideDirectory.appendingPathComponent("\(trackID).json")),
-              let entry = try? JSONDecoder().decode(CacheEntry.self, from: data) else { return nil }
-        return entry.result
-    }
-
     private func search(items: [URLQueryItem]) async -> [LRCLIBTrack] {
         var c = URLComponents(string: "https://lrclib.net/api/search")!
         c.queryItems = items
         guard let url = c.url, let res = try? await request(url), res.1 == 200 else { return [] }
         return (try? JSONDecoder().decode([LRCLIBTrack].self, from: res.0)) ?? []
-    }
-
-    func result(from t: LRCLIBTrack) -> LyricsResult? {
-        if t.hasSynced, let s = t.syncedLyrics { return .synced(s) }
-        if t.instrumental == true { return .instrumental }
-        if t.hasPlain, let p = t.plainLyrics { return .plain(p) }
-        return nil
     }
 
     private func request(_ url: URL) async throws -> (Data, Int) {
@@ -176,27 +124,5 @@ final class LyricsService {
         r.timeoutInterval = 10
         let (data, response) = try await URLSession.shared.data(for: r)
         return (data, (response as? HTTPURLResponse)?.statusCode ?? 0)
-    }
-
-    // MARK: 快取
-
-    private func cacheURL(_ trackID: String) -> URL {
-        cacheDirectory.appendingPathComponent("\(trackID).json")
-    }
-
-    private func loadCache(_ trackID: String) -> LyricsResult? {
-        guard let data = try? Data(contentsOf: cacheURL(trackID)),
-              let entry = try? JSONDecoder().decode(CacheEntry.self, from: data) else { return nil }
-        // 「找不到」只快取一天，之後重新查詢（LRCLIB 可能新增了）
-        if entry.result == .notFound, Date().timeIntervalSince(entry.savedAt) > 86_400 { return nil }
-        return entry.result
-    }
-
-    private func saveCache(_ result: LyricsResult, trackID: String) {
-        if case .failed = result { return }
-        let entry = CacheEntry(result: result, savedAt: Date())
-        if let data = try? JSONEncoder().encode(entry) {
-            try? data.write(to: cacheURL(trackID), options: .atomic)
-        }
     }
 }

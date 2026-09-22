@@ -70,4 +70,31 @@ final class LRCParserTests: XCTestCase {
         XCTAssertEqual(lines.index(at: 100), 2)
         XCTAssertNil([LyricLine]().index(at: 1))
     }
+
+    // MARK: 實務缺口（R-7）
+
+    func testEnhancedWordTimestampsRemoved() {
+        let lines = LRCParser.parse("[00:01.00]<00:01.00>測試 <00:01.50>第一句 <00:02.00>")
+        XCTAssertEqual(lines, [LyricLine(time: 1, text: "測試 第一句")])
+    }
+
+    func testBOMDoesNotDropFirstLine() {
+        let lines = LRCParser.parse("\u{FEFF}[00:01.00]測試第一句\r\n[00:02.00]測試第二句")
+        XCTAssertEqual(lines.map(\.text), ["測試第一句", "測試第二句"])
+    }
+
+    func testLeadingCreditsDropped() {
+        let lrc = "[00:00.00]作詞：測試甲\n[00:00.50]作曲：測試乙\n[00:10.00]測試第一句\n[00:20.00]作詞：不是開頭不移除"
+        XCTAssertEqual(LRCParser.parse(lrc).map(\.text), ["測試第一句", "作詞：不是開頭不移除"])
+        XCTAssertEqual(LRCParser.parse(lrc, dropCredits: false).count, 4)
+    }
+
+    func testOffsetWithSpacesAndUnsortedTimes() {
+        let lines = LRCParser.parse("[offset: +500]\n[00:05.00]測試第二句\n[00:02.00]測試第一句")
+        XCTAssertEqual(lines, [LyricLine(time: 1.5, text: "測試第一句"), LyricLine(time: 4.5, text: "測試第二句")])
+    }
+
+    func testFixtureParses() {
+        XCTAssertEqual(LRCParser.parse(Fixture.lrc(count: 5)).count, 5)
+    }
 }

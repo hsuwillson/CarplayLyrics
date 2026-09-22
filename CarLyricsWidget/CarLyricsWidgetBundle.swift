@@ -6,5 +6,6 @@ struct CarLyricsWidgetBundle: WidgetBundle {
     var body: some Widget {
         LyricsWidget()
         LyricsLiveActivity()
+        LyricsControl()
     }
 }

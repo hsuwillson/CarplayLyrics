@@ -3,7 +3,8 @@ import Foundation
 /// App 內的除錯紀錄（顯示在「除錯」頁，並寫入檔案，App 被系統終止後仍保留）。
 /// 不要記錄 token 或任何密碼。
 @MainActor
-final class DebugLog: ObservableObject {
+@Observable
+final class DebugLog {
     static let shared = DebugLog()
 
     struct Entry: Identifiable {
@@ -12,23 +13,23 @@ final class DebugLog: ObservableObject {
         let message: String
     }
 
-    @Published private(set) var entries: [Entry] = []
+    private(set) var entries: [Entry] = []
 
     /// 紀錄檔（Application Support/debug.log），可從除錯頁分享
-    let fileURL: URL = {
+    @ObservationIgnored let fileURL: URL = {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("debug.log")
     }()
 
     private static let maxFileBytes = 200_000
-    private let formatter: DateFormatter = {
+    @ObservationIgnored private let formatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "MM-dd HH:mm:ss.SSS"
         return f
     }()
     /// 檔案寫入放在背景佇列，不佔主執行緒
-    private let writer = LogFileWriter()
+    @ObservationIgnored private let writer = LogFileWriter()
 
     func add(_ message: String) {
         let now = Date()
@@ -90,9 +91,12 @@ private final class LogFileWriter: @unchecked Sendable {
     }
 }
 
+/// 已在主執行緒時直接寫入（保持紀錄順序）；其他執行緒才排到主執行緒
 func debugLog(_ message: String) {
-    Task { @MainActor in
-        DebugLog.shared.add(message)
+    if Thread.isMainThread {
+        MainActor.assumeIsolated { DebugLog.shared.add(message) }
+    } else {
+        Task { @MainActor in DebugLog.shared.add(message) }
     }
 }
 
@@ -109,5 +113,10 @@ enum BuildInfo {
     }
     static var summary: String {
         "\(version) (\(build)) · \(gitSHA)"
+    }
+    /// CI 寫入的建置時間（ISO 8601）
+    static var buildDate: Date? {
+        (Bundle.main.object(forInfoDictionaryKey: "CLBuildDate") as? String)
+            .flatMap { ISO8601DateFormatter().date(from: $0) }
     }
 }

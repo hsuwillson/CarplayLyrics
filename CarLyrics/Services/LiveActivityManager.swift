@@ -2,14 +2,23 @@ import ActivityKit
 import Foundation
 import UIKit
 
-/// 管理歌詞 Live Activity（鎖定畫面、靈動島、CarPlay）
+/// 管理歌詞即時動態（鎖定畫面、動態島、CarPlay）
 ///
-/// - iOS 只允許 App 在前景時「開始」Live Activity；背景失敗後就不再重試，等回到前景
+/// - iOS 只允許 App 在前景時「開始」即時動態；背景失敗後就不再重試，等回到前景
 /// - 更新依序送出（串成一條鏈），避免較舊的內容最後才到
-/// - 每次更新帶 staleDate；App 被系統終止後，Widget 會顯示「未更新」
+/// - 每次更新帶 staleDate；App 被系統終止後，畫面會顯示「暫停更新」
+/// - iOS 會擋掉只播背景音訊的 App 在背景的更新：連續被擋 5 次後，背景只在換歌 / 暫停時嘗試
+/// - 接近 8 小時上限且 App 在前景時，自動重新開始一個
 @MainActor
 final class LiveActivityManager {
     typealias State = LyricsActivityAttributes.ContentState
+
+    enum Priority {
+        /// 換句：背景被擋時略過
+        case routine
+        /// 換歌、暫停、播放：背景被擋時仍嘗試（也用來偵測系統行為是否改變）
+        case important
+    }
 
     private var activity: Activity<LyricsActivityAttributes>?
     private var lastState: State?
@@ -21,16 +30,21 @@ final class LiveActivityManager {
     private(set) var startedAt: Date?
     private(set) var lastUpdateAt: Date?
     private(set) var lastError: String?
-    /// 送出後系統實際套用 / 沒有套用的次數（iOS 會默默擋掉部分背景更新）
+    /// 送出後系統實際套用 / 沒有套用的次數
     private(set) var acceptedCount = 0
     private(set) var rejectedCount = 0
     private(set) var lastRejectedAt: Date?
+    /// 背景更新被系統擋掉（回前景時清除）
+    private(set) var backgroundBlocked = false
+    private var backgroundRejectStreak = 0
     private var loggedRejectionStreak = false
 
-    /// 超過這個秒數沒更新，系統會把 Live Activity 標成 stale
+    /// 超過這個秒數沒更新，系統會把即時動態標成 stale
     private static let staleAfter: TimeInterval = 90
     /// 內容沒變時，每隔這麼久重送一次（延長 staleDate）
-    private static let keepAliveInterval: TimeInterval = 45
+    var keepAliveInterval: TimeInterval = 45
+    /// iOS 8 小時上限前 30 分鐘，在前景時自動換新
+    private static let renewAfter: TimeInterval = 7.5 * 3600
 
     /// `.stale` 只是太久沒更新，仍然可以更新（更新後會回到 `.active`）
     var isActive: Bool {
@@ -42,25 +56,44 @@ final class LiveActivityManager {
 
     var stateDescription: String {
         guard let activity else { return startBlockedUntilForeground ? "未啟動（等回到前景）" : "未啟動" }
-        return "\(activity.activityState)"
+        switch activity.activityState {
+        case .active: return backgroundBlocked ? "進行中（背景更新被系統暫停）" : "進行中"
+        case .stale: return "暫停更新"
+        case .ended: return "已結束"
+        case .dismissed: return "已關閉"
+        @unknown default: return "未知"
+        }
     }
 
-    /// App 回到前景：解除封鎖、接手既有的 Live Activity
+    private var isInBackground: Bool {
+        UIApplication.shared.applicationState != .active
+    }
+
+    /// App 回到前景：解除封鎖、接手既有的即時動態、必要時換新
     func appBecameActive() {
         startBlockedUntilForeground = false
+        if backgroundBlocked { debugLog("回到前景，恢復即時動態更新") }
+        backgroundBlocked = false
+        backgroundRejectStreak = 0
         let existing = Activity<LyricsActivityAttributes>.activities
         if activity == nil,
            let first = existing.first(where: { $0.activityState == .active || $0.activityState == .stale }) {
             activity = first
             observe(first)
-            debugLog("接手既有的 Live Activity")
+            debugLog("接手既有的即時動態")
         }
         for extra in existing where extra.id != activity?.id {
             Task { await extra.end(nil, dismissalPolicy: .immediate) }
         }
+        if let startedAt, Date().timeIntervalSince(startedAt) > Self.renewAfter, let state = lastState {
+            debugLog("即時動態接近 8 小時上限，自動換新")
+            end()
+            start(state)
+        }
     }
 
-    func update(_ state: State) {
+    func update(_ model: ActivityContentModel, priority: Priority = .routine) {
+        let state = State(model)
         guard isActive, let activity else {
             self.activity = nil
             lastState = nil
@@ -69,13 +102,25 @@ final class LiveActivityManager {
             return
         }
         guard state != lastState else { return }
+        if backgroundBlocked && priority == .routine && isInBackground {
+            // 被擋就不白做工；記住最新內容，回前景或下一次重要更新時送出
+            lastState = state
+            return
+        }
         send(state, to: activity)
     }
 
     /// 內容沒變也定期重送，避免被標成 stale（由輪詢迴圈呼叫）
     func keepAlive() {
-        guard isActive, let activity, let lastState, let lastUpdateAt,
-              Date().timeIntervalSince(lastUpdateAt) > Self.keepAliveInterval else { return }
+        guard !backgroundBlocked || !isInBackground,
+              isActive, let activity, let lastState, let lastUpdateAt,
+              Date().timeIntervalSince(lastUpdateAt) > keepAliveInterval else { return }
+        send(lastState, to: activity)
+    }
+
+    /// 回到前景時把最新內容送出（背景被擋期間累積的）
+    func flush() {
+        guard isActive, let activity, let lastState else { return }
         send(lastState, to: activity)
     }
 
@@ -90,7 +135,7 @@ final class LiveActivityManager {
             await previous?.value
             await activity.end(nil, dismissalPolicy: .immediate)
         }
-        debugLog("Live Activity 已結束")
+        debugLog("即時動態已結束")
     }
 
     // MARK: - 內部
@@ -110,29 +155,41 @@ final class LiveActivityManager {
 
     /// 比對系統裡的內容，確認更新有沒有真的被套用（只記錄次數，不記錄歌詞）
     private func verify(_ state: State, on activity: Activity<LyricsActivityAttributes>) {
-        let background = UIApplication.shared.applicationState != .active
+        let background = isInBackground
         if activity.content.state == state {
             acceptedCount += 1
+            backgroundRejectStreak = 0
+            if backgroundBlocked {
+                backgroundBlocked = false
+                debugLog("即時動態背景更新恢復")
+            }
             if loggedRejectionStreak {
                 loggedRejectionStreak = false
-                debugLog("Live Activity 更新恢復正常（\(background ? "背景" : "前景")）")
+                debugLog("即時動態更新恢復正常（\(background ? "背景" : "前景")）")
             }
         } else {
             rejectedCount += 1
             lastRejectedAt = Date()
+            if background {
+                backgroundRejectStreak += 1
+                if backgroundRejectStreak >= 5 && !backgroundBlocked {
+                    backgroundBlocked = true
+                    debugLog("即時動態背景更新被系統擋住，改為只在換歌 / 暫停時嘗試")
+                }
+            }
             if !loggedRejectionStreak {
                 loggedRejectionStreak = true
-                debugLog("Live Activity 更新沒有被系統套用（\(background ? "背景" : "前景")）")
+                debugLog("即時動態更新沒有被系統套用（\(background ? "背景" : "前景")）")
             }
         }
         if (acceptedCount + rejectedCount) % 50 == 0 {
-            debugLog("Live Activity 統計：套用 \(acceptedCount)、被擋 \(rejectedCount)")
+            debugLog("即時動態統計：套用 \(acceptedCount)、被擋 \(rejectedCount)")
         }
     }
 
     private func start(_ state: State) {
         guard ActivityAuthorizationInfo().areActivitiesEnabled else {
-            lastError = "使用者已關閉 Live Activities"
+            lastError = "系統設定已關閉即時動態"
             return
         }
         do {
@@ -147,11 +204,11 @@ final class LiveActivityManager {
             lastUpdateAt = Date()
             lastError = nil
             observe(new)
-            debugLog("Live Activity 已開始")
+            debugLog("即時動態已開始")
         } catch {
             startBlockedUntilForeground = true
             lastError = error.localizedDescription
-            debugLog("Live Activity 無法開始（回到前景會再試）：\(error.localizedDescription)")
+            debugLog("即時動態無法開始（回到前景會再試）：\(error.localizedDescription)")
         }
     }
 
@@ -162,7 +219,7 @@ final class LiveActivityManager {
             for await state in a.activityStateUpdates {
                 guard let self else { return }
                 if state == .dismissed || state == .ended {
-                    debugLog("Live Activity 被關閉（\(state)）")
+                    debugLog("即時動態被關閉（\(state)）")
                     if self.activity?.id == a.id {
                         self.activity = nil
                         self.lastState = nil

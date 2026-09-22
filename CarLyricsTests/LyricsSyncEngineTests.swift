@@ -88,4 +88,19 @@ final class LyricsSyncEngineTests: XCTestCase {
         XCTAssertEqual(e.update(snap(10, at: 7.5)), .seeked)
         XCTAssertEqual(e.position(at: t0.addingTimeInterval(7.5))!, 10, accuracy: 0.001)
     }
+
+    // MARK: 邊界（T-7）
+
+    func testZeroDurationIsNotClamped() {
+        var e = LyricsSyncEngine()
+        e.update(PlaybackSnapshot(trackID: "a", progress: 10, duration: 0, isPlaying: true, timestamp: t0))
+        XCTAssertEqual(e.position(at: t0.addingTimeInterval(500))!, 510, accuracy: 0.001)
+    }
+
+    func testDisplayExactlyAtLineTime() {
+        let lines = Fixture.lines(count: 3)
+        XCTAssertEqual(LyricsDisplay(lines: lines, position: 4).index, 1)
+        XCTAssertNil(LyricsDisplay(lines: lines, position: 0.99).index)
+        XCTAssertNil(LyricsDisplay(lines: lines, position: -3).index)
+    }
 }
