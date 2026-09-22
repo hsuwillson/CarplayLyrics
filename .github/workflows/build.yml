@@ -5,12 +5,15 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: write   # 用來把 IPA 發佈到 Releases
+
 jobs:
   build:
     runs-on: macos-26
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Xcode version
         run: xcodebuild -version
@@ -58,17 +61,56 @@ jobs:
 
       - name: Package IPA
         run: |
+          rm -rf Payload CarLyrics.ipa
           mkdir -p Payload
           cp -R build/Build/Products/Release-iphoneos/CarLyrics.app Payload/
-          zip -qry CarLyrics-unsigned.ipa Payload
+          # 用 ditto 保留 symlink 與權限（比 zip 更符合 iOS 的 IPA 格式）
+          ditto -c -k --norsrc --keepParent Payload CarLyrics.ipa
 
-      - uses: actions/upload-artifact@v4
+      - name: Verify IPA
+        run: |
+          set -e
+          unzip -l CarLyrics.ipa
+          rm -rf verify && mkdir verify && unzip -q CarLyrics.ipa -d verify
+          APP=verify/Payload/CarLyrics.app
+          test -f "$APP/Info.plist"
+          test -f "$APP/PlugIns/CarLyricsWidget.appex/Info.plist"
+          plutil -p "$APP/Info.plist" | grep -E "CFBundleIdentifier|CFBundleExecutable|MinimumOSVersion"
+          lipo -info "$APP/CarLyrics"
+          lipo -info "$APP/PlugIns/CarLyricsWidget.appex/CarLyricsWidget"
+          ls -la "$APP"
+
+      # 診斷用：不含 Widget Extension、也沒有簽章的最小版本，用來判斷 Sideloadly 失敗的原因
+      - name: Package minimal IPA (diagnostic)
+        run: |
+          rm -rf Payload-min && mkdir -p Payload-min/Payload
+          cp -R build/Build/Products/Release-iphoneos/CarLyrics.app Payload-min/Payload/
+          rm -rf Payload-min/Payload/CarLyrics.app/PlugIns
+          codesign --remove-signature Payload-min/Payload/CarLyrics.app
+          rm -rf Payload-min/Payload/CarLyrics.app/_CodeSignature
+          (cd Payload-min && ditto -c -k --norsrc --keepParent Payload ../CarLyrics-minimal.ipa)
+          unzip -l CarLyrics-minimal.ipa
+
+      # 固定網址，可直接下載 .ipa（不會被包成 zip）：
+      # https://github.com/<owner>/<repo>/releases/download/latest-build/CarLyrics.ipa
+      - name: Publish to Releases (latest-build)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest-build --yes --cleanup-tag || true
+          gh release create latest-build CarLyrics.ipa CarLyrics-minimal.ipa \
+            --prerelease \
+            --title "Latest build #${{ github.run_number }}" \
+            --notes "Commit ${{ github.sha }}（未簽署，請用 Sideloadly 安裝）" \
+            --target "${{ github.sha }}"
+
+      - uses: actions/upload-artifact@v5
         with:
-          name: CarLyrics-unsigned-ipa
-          path: CarLyrics-unsigned.ipa
+          name: CarLyrics-ipa
+          path: CarLyrics.ipa
           retention-days: 14
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         if: always()
         with:
           name: xcodebuild-log
