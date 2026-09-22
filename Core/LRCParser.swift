@@ -1,7 +1,7 @@
 import Foundation
 
 /// 一行同步歌詞
-struct LyricLine: Equatable, Sendable {
+struct LyricLine: Codable, Equatable, Sendable {
     /// 開始時間（秒）
     let time: TimeInterval
     let text: String

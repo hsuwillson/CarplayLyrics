@@ -1,5 +1,6 @@
 import ActivityKit
 import Foundation
+import UIKit
 
 /// 管理歌詞 Live Activity（鎖定畫面、靈動島、CarPlay）
 ///
@@ -20,6 +21,11 @@ final class LiveActivityManager {
     private(set) var startedAt: Date?
     private(set) var lastUpdateAt: Date?
     private(set) var lastError: String?
+    /// 送出後系統實際套用 / 沒有套用的次數（iOS 會默默擋掉部分背景更新）
+    private(set) var acceptedCount = 0
+    private(set) var rejectedCount = 0
+    private(set) var lastRejectedAt: Date?
+    private var loggedRejectionStreak = false
 
     /// 超過這個秒數沒更新，系統會把 Live Activity 標成 stale
     private static let staleAfter: TimeInterval = 90
@@ -95,9 +101,32 @@ final class LiveActivityManager {
         lastUpdateAt = Date()
         let content = ActivityContent(state: state, staleDate: Date().addingTimeInterval(Self.staleAfter))
         let previous = chain
-        chain = Task {
+        chain = Task { [weak self] in
             await previous?.value
             await activity.update(content)
+            self?.verify(state, on: activity)
+        }
+    }
+
+    /// 比對系統裡的內容，確認更新有沒有真的被套用（只記錄次數，不記錄歌詞）
+    private func verify(_ state: State, on activity: Activity<LyricsActivityAttributes>) {
+        let background = UIApplication.shared.applicationState == .background
+        if activity.content.state == state {
+            acceptedCount += 1
+            if loggedRejectionStreak {
+                loggedRejectionStreak = false
+                debugLog("Live Activity 更新恢復正常（\(background ? "背景" : "前景")）")
+            }
+        } else {
+            rejectedCount += 1
+            lastRejectedAt = Date()
+            if !loggedRejectionStreak {
+                loggedRejectionStreak = true
+                debugLog("Live Activity 更新沒有被系統套用（\(background ? "背景" : "前景")）")
+            }
+        }
+        if (acceptedCount + rejectedCount) % 50 == 0 {
+            debugLog("Live Activity 統計：套用 \(acceptedCount)、被擋 \(rejectedCount)")
         }
     }
 

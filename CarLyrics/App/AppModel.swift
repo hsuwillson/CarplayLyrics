@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import UIKit
+import WidgetKit
 
 /// 串接 Spotify 輪詢、歌詞查詢、同步引擎、背景執行與 Live Activity
 @MainActor
@@ -10,6 +11,7 @@ final class AppModel: ObservableObject {
     private let lyricsService = LyricsService()
     let backgroundKeeper = BackgroundKeeper()
     let liveActivity = LiveActivityManager()
+    let locationKeeper = LocationKeeper()
     private var engine = LyricsSyncEngine()
     private let songOffsets = SongOffsetStore()
 
@@ -31,6 +33,8 @@ final class AppModel: ObservableObject {
     private(set) var maxPollGap: TimeInterval = 0
     private(set) var lastResponseBytes = 0
     private(set) var lastErrorMessage: String?
+    private(set) var widgetReloadCount = 0
+    private(set) var lastWidgetReloadAt: Date?
 
     // MARK: 設定
 
@@ -40,6 +44,7 @@ final class AppModel: ObservableObject {
             UserDefaults.standard.set(offset, forKey: "lyricsOffset")
             tick()
             rescheduleTick()
+            publishWidgetTimeline()
         }
     }
 
@@ -49,6 +54,7 @@ final class AppModel: ObservableObject {
             if let id = nowPlaying?.trackID { songOffsets.set(songOffset, for: id) }
             tick()
             rescheduleTick()
+            publishWidgetTimeline()
         }
     }
 
@@ -56,7 +62,20 @@ final class AppModel: ObservableObject {
     @Published var backgroundEnabled: Bool {
         didSet {
             UserDefaults.standard.set(backgroundEnabled, forKey: "backgroundEnabled")
-            if backgroundEnabled && auth.isLoggedIn { backgroundKeeper.start() } else { backgroundKeeper.stop() }
+            if backgroundEnabled && auth.isLoggedIn {
+                startBackgroundHelpers()
+            } else {
+                backgroundKeeper.stop()
+                locationKeeper.stop()
+            }
+        }
+    }
+
+    /// 背景定位輔助：讓 iOS 不把 App 當成「只播背景音訊」而擋掉 Live Activity 更新
+    @Published var locationAssistEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(locationAssistEnabled, forKey: "locationAssistEnabled")
+            if locationAssistEnabled { startBackgroundHelpers() } else { locationKeeper.stop() }
         }
     }
 
@@ -121,6 +140,7 @@ final class AppModel: ObservableObject {
         backgroundEnabled = UserDefaults.standard.object(forKey: "backgroundEnabled") as? Bool ?? true
         liveActivityEnabled = UserDefaults.standard.object(forKey: "liveActivityEnabled") as? Bool ?? true
         keepScreenOn = UserDefaults.standard.bool(forKey: "keepScreenOn")
+        locationAssistEnabled = UserDefaults.standard.object(forKey: "locationAssistEnabled") as? Bool ?? true
         checkPreviousHeartbeat()
         // 來電 / Siri 結束：閒置計時重新開始（通話期間 Spotify 是暫停的）
         backgroundKeeper.onInterruptionEnded = { [weak self] in
@@ -155,12 +175,19 @@ final class AppModel: ObservableObject {
     // MARK: - 生命週期
 
     func start() {
-        if backgroundEnabled && auth.isLoggedIn { backgroundKeeper.start() }
+        startBackgroundHelpers()
         if pollTask == nil {
             debugLog("開始輪詢（\(BuildInfo.summary)）")
             startPollLoop()
         }
         if tickTask == nil { startTickLoop() }
+    }
+
+    /// 無聲音訊 + 背景定位。定位只能在前景開始，進背景後會持續
+    private func startBackgroundHelpers() {
+        guard backgroundEnabled, auth.isLoggedIn else { return }
+        backgroundKeeper.start()
+        if locationAssistEnabled && isForeground { locationKeeper.start() }
     }
 
     private func startTickLoop() {
@@ -233,7 +260,9 @@ final class AppModel: ObservableObject {
         auth.logout()
         liveActivity.end()
         backgroundKeeper.stop()
+        locationKeeper.stop()
         clearPlayback()
+        publishWidgetTimeline(idleMessage: "請先登入 Spotify")
         setStatus("")
         debugLog("已登出")
     }
@@ -296,6 +325,7 @@ final class AppModel: ObservableObject {
         tick()
         rescheduleTick()
         pushLiveActivity()
+        publishWidgetTimeline()
     }
 
     // MARK: - 輪詢
@@ -308,6 +338,7 @@ final class AppModel: ObservableObject {
             // 可能是在背景被自動登出（refresh token 失效）：停止一切，不要空轉耗電
             if liveActivity.isActive { liveActivity.end() }
             if backgroundKeeper.wantsRunning { backgroundKeeper.stop() }
+            if locationKeeper.wantsRunning { locationKeeper.stop() }
             setStatus("請先登入 Spotify")
             if !isForeground {
                 stop()
@@ -357,6 +388,7 @@ final class AppModel: ObservableObject {
                 }
                 // 佔位的「連接 Spotify 中…」也要換成正確狀態（update 會去重）
                 pushStoppedLiveActivity()
+                publishWidgetTimeline(idleMessage: "Spotify 沒有在播放")
                 if idle?.kind != .nothing { idle = (since: Date(), kind: .nothing) }
                 setStatus("Spotify 沒有在播放音樂（或正在播 Podcast）")
                 if checkIdle() { return 30 }
@@ -399,6 +431,7 @@ final class AppModel: ObservableObject {
         }
         debugLog("閒置中，停止背景執行以省電（下次打開 App 會自動恢復）")
         backgroundKeeper.stop()
+        locationKeeper.stop()
         stop()
         return true
     }
@@ -453,6 +486,7 @@ final class AppModel: ObservableObject {
         }
         updateIdleTimer()
         tick()
+        if change != .none && change != .stale { publishWidgetTimeline() }
     }
 
     private func clearPlayback() {
@@ -521,6 +555,7 @@ final class AppModel: ObservableObject {
         tick()
         rescheduleTick()
         pushLiveActivity()
+        publishWidgetTimeline()
     }
 
     func clearLyricsCache() {
@@ -636,6 +671,49 @@ final class AppModel: ObservableObject {
         liveActivity.update(LyricsActivityAttributes.ContentState(
             currentLine: "Spotify 沒有在播放", nextLine: "", trackName: "CarLyrics",
             artistName: "", isPlaying: false))
+    }
+
+    // MARK: - 小工具時間軸
+
+    private var lastWidgetSnapshot: LyricsTimelineSnapshot?
+
+    /// 把整首歌的時間軸交給小工具，小工具會自己依時間換句（不受背景更新限制）。
+    /// 只在換歌、拖動、暫停/播放、歌詞載入、調整延遲時呼叫，避免用光系統的重新載入額度。
+    private func publishWidgetTimeline(idleMessage: String? = nil) {
+        let now = Date()
+        let snapshot: LyricsTimelineSnapshot
+        if let np = nowPlaying, idleMessage == nil {
+            let pos = engine.position(at: now) ?? np.progress
+            let effective = pos + offset + songOffset
+            var message: String?
+            if !np.isPlaying {
+                let line = lines.isEmpty ? np.title : (display.current.isEmpty ? np.title : display.current)
+                message = "⏸ \(line)"
+            } else if lines.isEmpty && lyricsStatus == "搜尋歌詞中…" {
+                message = "搜尋歌詞中…"
+            }
+            snapshot = LyricsTimelineSnapshot(trackID: np.trackID, title: np.title, artist: np.artist,
+                                              lines: lines, songStart: now.addingTimeInterval(-effective),
+                                              isPlaying: np.isPlaying, message: message, updatedAt: now)
+        } else {
+            snapshot = .idle(idleMessage ?? "打開 CarLyrics 開始同步歌詞", at: now)
+        }
+        if let last = lastWidgetSnapshot, Self.sameTimeline(last, snapshot) { return }
+        lastWidgetSnapshot = snapshot
+        guard LyricsTimelineStore.save(snapshot) else {
+            debugLog("小工具時間軸寫入失敗（App Group 無法使用）")
+            return
+        }
+        WidgetCenter.shared.reloadTimelines(ofKind: LyricsTimelineStore.widgetKind)
+        widgetReloadCount += 1
+        lastWidgetReloadAt = now
+    }
+
+    /// 內容相同、起點相差不到 0.3 秒 → 不必重新載入
+    private static func sameTimeline(_ a: LyricsTimelineSnapshot, _ b: LyricsTimelineSnapshot) -> Bool {
+        a.trackID == b.trackID && a.lines == b.lines && a.isPlaying == b.isPlaying
+            && a.message == b.message && a.title == b.title
+            && abs(a.songStart.timeIntervalSince(b.songStart)) < 0.3
     }
 
     // MARK: - 預先載入下一首歌詞

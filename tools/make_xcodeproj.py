@@ -121,7 +121,7 @@ w_list = target_configs("widget", {
 })
 t_widget = add("target.widget", "PBXNativeTarget", buildConfigurationList=w_list,
                buildPhases=[w_src, w_fw, w_res], buildRules=[], dependencies=[],
-               fileSystemSynchronizedGroups=[g_widget, g_shared],
+               fileSystemSynchronizedGroups=[g_widget, g_shared, g_core],
                name="CarLyricsWidget", productName="CarLyricsWidget",
                productReference=p_widget, productType="com.apple.product-type.app-extension")
 

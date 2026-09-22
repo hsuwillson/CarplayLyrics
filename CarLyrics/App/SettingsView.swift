@@ -103,13 +103,17 @@ private struct DrivingSection: View {
             Toggle(isOn: $model.liveActivityEnabled) {
                 Label("Live Activity（鎖定畫面 / CarPlay）", systemImage: "car")
             }
+            Toggle(isOn: $model.locationAssistEnabled) {
+                Label("背景定位輔助（讓鎖定畫面持續更新）", systemImage: "location")
+            }
+            .disabled(!model.backgroundEnabled)
             Toggle(isOn: $model.keepScreenOn) {
                 Label("播放時螢幕不自動關閉", systemImage: "sun.max")
             }
         } header: {
             Text("開車模式")
         } footer: {
-            Text("開車前先打開一次 CarLyrics 再鎖定手機；Live Activity 只能在 App 開著時啟動。停止播放 10 分鐘後會自動停止背景執行以省電。")
+            Text("開車前先打開一次 CarLyrics 再鎖定手機；Live Activity 只能在 App 開著時啟動。背景定位只用最低精準度，不記錄也不上傳位置。停止播放 10 分鐘後會自動停止背景執行以省電。")
         }
     }
 }

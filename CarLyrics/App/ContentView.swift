@@ -360,7 +360,7 @@ private struct OffsetControl: View {
             VStack(spacing: 1) {
                 Text(String(format: "%+.2f 秒", value))
                     .font(.headline.monospacedDigit())
-                Text(usePerSong ? "這首歌再提前" : "歌詞提前（全部）")
+                Text(usePerSong ? "只調「\(model.nowPlaying?.title ?? "")」" : "歌詞提前（全部）")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -529,6 +529,12 @@ struct DiagnosticsView: View {
             LabeledContent("最近輪詢", value: model.lastPollAt.map { "\(Int(now.timeIntervalSince($0))) 秒前" } ?? "—")
             LabeledContent("最長輪詢間隔", value: String(format: "%.1f 秒", model.maxPollGap))
             LabeledContent("回應大小", value: "\(model.lastResponseBytes) bytes")
+            LabeledContent("背景定位", value: model.locationKeeper.isUpdating ? "執行中" : "停止")
+            LabeledContent("定位權限", value: model.locationKeeper.authorizationDescription)
+            LabeledContent("定位更新次數", value: "\(model.locationKeeper.updateCount)")
+            if let error = model.locationKeeper.lastError {
+                LabeledContent("定位錯誤", value: error).font(.caption)
+            }
             if let error = model.lastErrorMessage {
                 LabeledContent("最近錯誤", value: error).font(.caption)
             }
@@ -544,6 +550,14 @@ struct DiagnosticsView: View {
         Section {
             LabeledContent("狀態", value: model.liveActivity.stateDescription)
             LabeledContent("更新次數", value: "\(model.liveActivity.updateCount)")
+            LabeledContent("系統套用 / 被擋", value: "\(model.liveActivity.acceptedCount) / \(model.liveActivity.rejectedCount)")
+            if let at = model.liveActivity.lastRejectedAt {
+                LabeledContent("最近被擋", value: at.formatted(date: .omitted, time: .standard))
+            }
+            LabeledContent("小工具重新載入", value: "\(model.widgetReloadCount) 次")
+            if let at = model.lastWidgetReloadAt {
+                LabeledContent("小工具最後載入", value: at.formatted(date: .omitted, time: .standard))
+            }
             if let at = model.liveActivity.lastUpdateAt {
                 LabeledContent("最後更新", value: at.formatted(date: .omitted, time: .standard))
             }
