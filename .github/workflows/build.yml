@@ -62,7 +62,9 @@ jobs:
           which swiftlint || brew install swiftlint
           swiftlint lint --quiet --reporter github-actions-logging || true
 
+      # 測試失敗也照樣編譯 App，一次看到所有編譯錯誤
       - name: Build (no signing)
+        if: ${{ !cancelled() }}
         run: |
           xcodebuild build \
             -project CarLyrics.xcodeproj \

@@ -119,6 +119,16 @@ struct WidgetReloadPolicy: Equatable, Sendable {
     /// 最近一次判定的比例（診斷用）：實際 / 要求
     private(set) var lastWindowResult: (rendered: Int, requested: Int)?
 
+    init(minInterval: TimeInterval = 1, hourlyCap: Int = 200, windowSize: Int = 10,
+         minRenderedPerWindow: Int = 3, disableDuration: TimeInterval = 1800, quietAfterImportant: TimeInterval = 2) {
+        self.minInterval = minInterval
+        self.hourlyCap = hourlyCap
+        self.windowSize = windowSize
+        self.minRenderedPerWindow = minRenderedPerWindow
+        self.disableDuration = disableDuration
+        self.quietAfterImportant = quietAfterImportant
+    }
+
     static func == (a: WidgetReloadPolicy, b: WidgetReloadPolicy) -> Bool {
         a.recent == b.recent && a.disabledUntil == b.disabledUntil && a.lastRequestAt == b.lastRequestAt
     }
