@@ -6,6 +6,8 @@ struct SpotifyTokens: Codable {
     var accessToken: String
     var refreshToken: String
     var expiresAt: Date
+    /// 實際取得的權限（舊版存的 token 沒有這個欄位）
+    var scope: String?
 }
 
 enum SpotifyAuthError: LocalizedError {
@@ -103,7 +105,13 @@ final class SpotifyAuth: NSObject, ObservableObject {
         }
         store(SpotifyTokens(accessToken: response.access_token,
                             refreshToken: refresh,
-                            expiresAt: Date().addingTimeInterval(TimeInterval(response.expires_in))))
+                            expiresAt: Date().addingTimeInterval(TimeInterval(response.expires_in)),
+                            scope: response.scope))
+    }
+
+    /// 目前的 token 是否包含某個權限
+    func hasScope(_ scope: String) -> Bool {
+        (tokens?.scope ?? "").split(separator: " ").contains { $0 == scope }
     }
 
     func logout() {
@@ -134,7 +142,8 @@ final class SpotifyAuth: NSObject, ObservableObject {
             ])
             return SpotifyTokens(accessToken: r.access_token,
                                  refreshToken: r.refresh_token ?? current.refreshToken,
-                                 expiresAt: Date().addingTimeInterval(TimeInterval(r.expires_in)))
+                                 expiresAt: Date().addingTimeInterval(TimeInterval(r.expires_in)),
+                                 scope: r.scope ?? current.scope)
         }
         refreshTask = task
         defer { refreshTask = nil }
@@ -166,6 +175,7 @@ final class SpotifyAuth: NSObject, ObservableObject {
         let access_token: String
         let expires_in: Int
         let refresh_token: String?
+        let scope: String?
     }
 
     private func requestToken(_ params: [String: String]) async throws -> TokenResponse {

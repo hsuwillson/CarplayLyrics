@@ -65,4 +65,27 @@ final class LyricsSyncEngineTests: XCTestCase {
         XCTAssertEqual(lines.nextChangeTime(after: 1), 3)
         XCTAssertNil(lines.nextChangeTime(after: 5))
     }
+
+    func testStaleProgressIsIgnored() {
+        var e = LyricsSyncEngine()
+        e.update(snap(10, at: 0))
+        // Spotify 連續回傳同一個進度 → 忽略，位置繼續用本地時鐘往前推
+        XCTAssertEqual(e.update(snap(10, at: 2.5)), .stale)
+        XCTAssertEqual(e.update(snap(10, at: 5)), .stale)
+        XCTAssertEqual(e.position(at: t0.addingTimeInterval(5))!, 15, accuracy: 0.001)
+        // 恢復正常資料
+        XCTAssertEqual(e.update(snap(15.1, at: 5.1)), .none)
+        XCTAssertEqual(e.staleCount, 0)
+    }
+
+    func testStaleAcceptedAfterLimit() {
+        var e = LyricsSyncEngine()
+        e.maxStaleUpdates = 2
+        e.update(snap(10, at: 0))
+        XCTAssertEqual(e.update(snap(10, at: 2.5)), .stale)
+        XCTAssertEqual(e.update(snap(10, at: 5)), .stale)
+        // 超過上限就相信 Spotify（視為拖動/卡住）
+        XCTAssertEqual(e.update(snap(10, at: 7.5)), .seeked)
+        XCTAssertEqual(e.position(at: t0.addingTimeInterval(7.5))!, 10, accuracy: 0.001)
+    }
 }

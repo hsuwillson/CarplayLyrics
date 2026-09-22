@@ -26,6 +26,8 @@ final class AppModel: ObservableObject {
     private var tickTask: Task<Void, Never>?
     private var lyricsTask: Task<Void, Never>?
     private var quotaMode = false
+    /// 偵測到過期資料時，下一次改用 /me/player
+    private var useFullPlayer = false
 
     init() {
         offset = UserDefaults.standard.double(forKey: "lyricsOffset")
@@ -84,6 +86,32 @@ final class AppModel: ObservableObject {
         debugLog("已登出")
     }
 
+    // MARK: 播放控制
+
+    var canControlPlayback: Bool {
+        auth.hasScope(AppConfig.controlScope)
+    }
+
+    func control(_ command: PlayerCommand) {
+        guard canControlPlayback else {
+            statusMessage = "請先登出再登入，授權「控制播放」"
+            debugLog("缺少 \(AppConfig.controlScope) 權限，需要重新登入")
+            return
+        }
+        Task {
+            do {
+                try await api.send(command)
+                debugLog("播放控制：\(command.rawValue)")
+                // 讓 Spotify 有時間切換，再立刻更新一次狀態
+                try? await Task.sleep(for: .milliseconds(400))
+                _ = await pollOnce()
+            } catch {
+                statusMessage = error.localizedDescription
+                debugLog("播放控制失敗：\(error.localizedDescription)")
+            }
+        }
+    }
+
     func clearLyricsCache() {
         lyricsService.clearCache()
         debugLog("已清除歌詞快取")
@@ -99,11 +127,14 @@ final class AppModel: ObservableObject {
             return 3
         }
         do {
-            switch try await api.currentlyPlaying() {
+            let full = useFullPlayer
+            useFullPlayer = false
+            switch try await api.currentlyPlaying(fullPlayer: full) {
             case .playing(let np, let measuredAt):
                 handle(np, measuredAt: measuredAt)
                 statusMessage = np.isPlaying ? "播放中" : "已暫停"
                 if quotaMode { return 6 }
+                if useFullPlayer { return 1 }   // 過期資料 → 盡快用另一個端點確認
                 return np.isPlaying ? 2.5 : 5
 
             case .nothing:
@@ -141,6 +172,9 @@ final class AppModel: ObservableObject {
             debugLog("偵測到拖動進度 → \(formatTime(np.progress))")
         case .playStateChanged:
             debugLog(np.isPlaying ? "繼續播放" : "暫停")
+        case .stale:
+            debugLog("Spotify 進度沒有前進（\(formatTime(np.progress))），忽略並改用 /me/player 重試")
+            useFullPlayer = true
         case .none:
             break
         }

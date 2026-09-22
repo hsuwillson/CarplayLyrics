@@ -74,12 +74,34 @@ private struct NowPlayingCard: View {
                 HStack {
                     Text(formatTime(model.position))
                     Spacer()
-                    Image(systemName: np.isPlaying ? "play.fill" : "pause.fill")
-                    Spacer()
                     Text(formatTime(np.duration))
                 }
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
+
+                HStack(spacing: 44) {
+                    Button { model.control(.previous) } label: {
+                        Image(systemName: "backward.fill")
+                    }
+                    Button { model.control(np.isPlaying ? .pause : .play) } label: {
+                        Image(systemName: np.isPlaying ? "pause.fill" : "play.fill")
+                            .font(.system(size: 34))
+                    }
+                    Button { model.control(.next) } label: {
+                        Image(systemName: "forward.fill")
+                    }
+                }
+                .font(.system(size: 26))
+                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity)
+                .padding(.top, 4)
+
+                if !model.canControlPlayback {
+                    Text("要使用播放按鈕，請先登出再重新登入 Spotify")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                        .frame(maxWidth: .infinity)
+                }
             } else {
                 Text("沒有正在播放的歌曲")
                     .foregroundStyle(.secondary)
