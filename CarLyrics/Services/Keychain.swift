@@ -18,7 +18,7 @@ enum Keychain {
     }
 
     static func save(_ data: Data, account: String) throws {
-        SecItemDelete(baseQuery(account) as CFDictionary)
+        _ = SecItemDelete(baseQuery(account) as CFDictionary)
         var attributes = baseQuery(account)
         attributes[kSecValueData as String] = data
         // 鎖定畫面後背景執行也要能讀取
@@ -27,17 +27,17 @@ enum Keychain {
         guard status == errSecSuccess else { throw KeychainError(status: status) }
     }
 
-    static func load(account: String) -> Data? {
+    /// 回傳資料與狀態碼。`errSecInteractionNotAllowed` 代表裝置重開機後還沒解鎖過，稍後再讀。
+    static func load(account: String) -> (data: Data?, status: OSStatus) {
         var query = baseQuery(account)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status == errSecSuccess else { return nil }
-        return result as? Data
+        return (status == errSecSuccess ? result as? Data : nil, status)
     }
 
     static func delete(account: String) {
-        SecItemDelete(baseQuery(account) as CFDictionary)
+        _ = SecItemDelete(baseQuery(account) as CFDictionary)
     }
 }

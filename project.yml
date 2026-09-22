@@ -1,3 +1,4 @@
+# 注意：CI 使用 tools/make_xcodeproj.py 產生專案，這個檔案只是 XcodeGen 參考用，可能與實際設定不同步。
 name: CarLyrics
 options:
   bundleIdPrefix: com.willsonhsu

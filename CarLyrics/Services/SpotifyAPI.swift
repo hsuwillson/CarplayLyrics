@@ -9,10 +9,18 @@ struct NowPlaying: Equatable {
     let duration: TimeInterval
     let progress: TimeInterval
     let isPlaying: Bool
+
+    /// 樂觀更新用：複製一份並改變進度 / 播放狀態
+    func with(progress: TimeInterval? = nil, isPlaying: Bool? = nil) -> NowPlaying {
+        NowPlaying(trackID: trackID, title: title, artist: artist, primaryArtist: primaryArtist,
+                   album: album, duration: duration, progress: progress ?? self.progress,
+                   isPlaying: isPlaying ?? self.isPlaying)
+    }
 }
 
 enum PlayerPollResult {
-    case playing(NowPlaying, measuredAt: Date)
+    /// `sentAt`：請求送出的時間，用來丟掉比較舊的回應
+    case playing(NowPlaying, measuredAt: Date, sentAt: Date)
     case nothing
     case rateLimited(retryAfter: TimeInterval, quotaExceeded: Bool)
 }
@@ -31,22 +39,36 @@ enum SpotifyAPIError: LocalizedError {
     }
 }
 
-enum PlayerCommand: String {
+enum PlayerCommand {
     case previous, next, play, pause
     /// 從頭播放目前這首歌
     case restart
+    /// 跳到指定位置（毫秒）
+    case seek(ms: Int)
+
+    var name: String {
+        switch self {
+        case .previous: return "previous"
+        case .next: return "next"
+        case .play: return "play"
+        case .pause: return "pause"
+        case .restart: return "restart"
+        case .seek(let ms): return "seek \(ms)ms"
+        }
+    }
 
     var method: String {
         switch self {
         case .previous, .next: return "POST"
-        case .play, .pause, .restart: return "PUT"
+        case .play, .pause, .restart, .seek: return "PUT"
         }
     }
 
     var path: String {
         switch self {
         case .restart: return "seek?position_ms=0"
-        default: return rawValue
+        case .seek(let ms): return "seek?position_ms=\(max(0, ms))"
+        default: return name
         }
     }
 }
@@ -55,6 +77,8 @@ enum PlayerCommand: String {
 @MainActor
 final class SpotifyAPI {
     private let auth: SpotifyAuth
+    /// 最近一次輪詢回應大小（bytes），顯示在除錯頁
+    private(set) var lastResponseBytes = 0
 
     init(auth: SpotifyAuth) {
         self.auth = auth
@@ -94,7 +118,7 @@ final class SpotifyAPI {
     /// 播放佇列的下一首（用來預先載入歌詞）；失敗時回傳 nil
     func nextInQueue() async -> NowPlaying? {
         guard let token = try? await auth.validAccessToken() else { return nil }
-        var request = URLRequest(url: URL(string: "https://api.spotify.com/v1/me/player/queue")!)
+        var request = URLRequest(url: URL(string: "https://api.spotify.com/v1/me/player/queue?market=from_token")!)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.timeoutInterval = 10
         guard let result = try? await URLSession.shared.data(for: request),
@@ -115,7 +139,7 @@ final class SpotifyAPI {
     private func currentlyPlaying(fullPlayer: Bool, retryOn401: Bool) async throws -> PlayerPollResult {
         let token = try await auth.validAccessToken()
         let path = fullPlayer ? "me/player" : "me/player/currently-playing"
-        var request = URLRequest(url: URL(string: "https://api.spotify.com/v1/\(path)?additional_types=track")!)
+        var request = URLRequest(url: URL(string: "https://api.spotify.com/v1/\(path)?additional_types=track&market=from_token")!)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.timeoutInterval = 10
         request.cachePolicy = .reloadIgnoringLocalCacheData
@@ -123,6 +147,7 @@ final class SpotifyAPI {
         let sent = Date()
         let (data, response) = try await URLSession.shared.data(for: request)
         let received = Date()
+        lastResponseBytes = data.count
         guard let http = response as? HTTPURLResponse else { throw SpotifyAPIError.http(0, "") }
 
         switch http.statusCode {
@@ -142,7 +167,7 @@ final class SpotifyAPI {
             )
             // 以請求來回時間的中點當作進度成立的時刻
             let measuredAt = sent.addingTimeInterval(received.timeIntervalSince(sent) / 2)
-            return .playing(np, measuredAt: measuredAt)
+            return .playing(np, measuredAt: measuredAt, sentAt: sent)
 
         case 204:
             return .nothing

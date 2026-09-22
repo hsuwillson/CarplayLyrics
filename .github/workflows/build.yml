@@ -47,8 +47,16 @@ jobs:
             -destination 'generic/platform=iOS' \
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} \
             | tee xcodebuild.log | grep -E "error:|BUILD" || true
           test "${PIPESTATUS[0]}" -eq 0
+
+      # 把 git SHA 寫進 Info.plist，除錯頁會顯示（確認手機上裝的是哪一版）
+      - name: Stamp build info
+        run: |
+          APP=build/Build/Products/Release-iphoneos/CarLyrics.app
+          plutil -replace CLGitSHA -string "${{ github.sha }}" "$APP/Info.plist"
+          plutil -p "$APP/Info.plist" | grep -E "CFBundleVersion|CLGitSHA"
 
       # 用 ad-hoc 簽章把 entitlements（App Group）寫進執行檔，
       # Sideloadly 重簽時才會幫你註冊 App Group。

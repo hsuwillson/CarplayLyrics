@@ -37,13 +37,31 @@ final class SpotifyAuth: NSObject, ObservableObject {
     private var session: ASWebAuthenticationSession?
     private var refreshTask: Task<SpotifyTokens, Error>?
     private static let keychainAccount = "spotify.tokens"
+    /// 重開機後尚未解鎖，Keychain 暫時讀不到 → 稍後重讀，不要當成「未登入」
+    private var keychainLocked = false
 
     override init() {
-        let saved = Keychain.load(account: Self.keychainAccount)
-            .flatMap { try? JSONDecoder().decode(SpotifyTokens.self, from: $0) }
+        let (data, status) = Keychain.load(account: Self.keychainAccount)
+        let saved = data.flatMap { try? JSONDecoder().decode(SpotifyTokens.self, from: $0) }
         tokens = saved
-        isLoggedIn = saved != nil
+        keychainLocked = status == errSecInteractionNotAllowed
+        isLoggedIn = saved != nil || keychainLocked
         super.init()
+    }
+
+    /// Keychain 之前被鎖住時重讀一次
+    func reloadIfNeeded() {
+        guard keychainLocked, tokens == nil else { return }
+        let (data, status) = Keychain.load(account: Self.keychainAccount)
+        if let t = data.flatMap({ try? JSONDecoder().decode(SpotifyTokens.self, from: $0) }) {
+            tokens = t
+            keychainLocked = false
+            isLoggedIn = true
+            debugLog("Keychain 已解鎖，重新讀取登入資訊")
+        } else if status != errSecInteractionNotAllowed {
+            keychainLocked = false
+            isLoggedIn = false
+        }
     }
 
     // MARK: 登入
@@ -115,6 +133,7 @@ final class SpotifyAuth: NSObject, ObservableObject {
     }
 
     func logout() {
+        keychainLocked = false
         tokens = nil
         Keychain.delete(account: Self.keychainAccount)
         isLoggedIn = false
@@ -124,6 +143,7 @@ final class SpotifyAuth: NSObject, ObservableObject {
 
     /// 取得有效的 access token；快過期時自動 refresh
     func validAccessToken() async throws -> String {
+        reloadIfNeeded()
         guard let t = tokens else { throw SpotifyAuthError.notLoggedIn }
         if t.expiresAt.timeIntervalSinceNow > 60 { return t.accessToken }
         return try await refresh().accessToken
@@ -154,10 +174,13 @@ final class SpotifyAuth: NSObject, ObservableObject {
             debugLog("Token 已更新")
             return new
         } catch {
-            // refresh token 失效（例如被撤銷）→ 需要重新登入
-            if case SpotifyAuthError.tokenRequestFailed(let code, _) = error, code == 400 || code == 401 {
+            // 只有 refresh token 確定失效（invalid_grant / 401）才登出；其他錯誤保留 token 稍後再試
+            if case SpotifyAuthError.tokenRequestFailed(let code, let body) = error,
+               code == 401 || (code == 400 && body.contains("invalid_grant")) {
                 debugLog("Refresh token 失效，請重新登入")
                 logout()
+            } else {
+                debugLog("Token 更新失敗，稍後重試：\(error.localizedDescription)")
             }
             throw error
         }

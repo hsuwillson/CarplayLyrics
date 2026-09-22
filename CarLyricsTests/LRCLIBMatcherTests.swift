@@ -28,4 +28,11 @@ final class LRCLIBMatcherTests: XCTestCase {
         XCTAssertEqual(t.id, 7)
         XCTAssertTrue(t.hasSynced)
     }
+
+    func testRankDedupesAndOrders() {
+        let r = [track(1, 210, plain: "測試"), track(2, 205, synced: "[00:01.00]測試"),
+                 track(2, 205, synced: "[00:01.00]測試"), track(3, 200, synced: "[00:01.00]測試"),
+                 track(4, 200)]
+        XCTAssertEqual(LRCLIBMatcher.rank(r, duration: 200).map(\.id), [3, 2, 1])
+    }
 }
