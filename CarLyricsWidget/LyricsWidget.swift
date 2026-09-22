@@ -22,6 +22,7 @@ struct LyricsProvider: TimelineProvider {
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<LyricsEntry>) -> Void) {
+        LyricsTimelineStore.recordRender()
         let list = entries(now: .now)
         // App 在狀態改變時會主動 reload，所以時間軸播完就停
         completion(Timeline(entries: list.isEmpty ? [placeholder(in: context)] : list, policy: .never))

@@ -554,7 +554,7 @@ struct DiagnosticsView: View {
             if let at = model.liveActivity.lastRejectedAt {
                 LabeledContent("最近被擋", value: at.formatted(date: .omitted, time: .standard))
             }
-            LabeledContent("小工具重新載入", value: "\(model.widgetReloadCount) 次")
+            LabeledContent("小工具 要求 / 實際", value: "\(model.widgetReloadCount) / \(LyricsTimelineStore.renderCount)")
             if let at = model.lastWidgetReloadAt {
                 LabeledContent("小工具最後載入", value: at.formatted(date: .omitted, time: .standard))
             }

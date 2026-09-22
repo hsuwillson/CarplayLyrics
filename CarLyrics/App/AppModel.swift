@@ -140,7 +140,8 @@ final class AppModel: ObservableObject {
         backgroundEnabled = UserDefaults.standard.object(forKey: "backgroundEnabled") as? Bool ?? true
         liveActivityEnabled = UserDefaults.standard.object(forKey: "liveActivityEnabled") as? Bool ?? true
         keepScreenOn = UserDefaults.standard.bool(forKey: "keepScreenOn")
-        locationAssistEnabled = UserDefaults.standard.object(forKey: "locationAssistEnabled") as? Bool ?? true
+        // 實測背景定位沒有讓 Live Activity 恢復更新 → 預設關閉，保留開關供實驗
+        locationAssistEnabled = UserDefaults.standard.object(forKey: "locationAssistEnabled") as? Bool ?? false
         checkPreviousHeartbeat()
         // 來電 / Siri 結束：閒置計時重新開始（通話期間 Spotify 是暫停的）
         backgroundKeeper.onInterruptionEnded = { [weak self] in
@@ -627,8 +628,10 @@ final class AppModel: ObservableObject {
         let effective = pos + offset + songOffset
         let d = LyricsDisplay(lines: lines, position: effective)
         if d != display {
+            let lineChanged = d.current != display.current
             display = d
             pushLiveActivity()
+            if lineChanged { reloadWidgetForLineChange() }
         }
         guard engine.snapshot?.isPlaying == true, let next = lines.nextChangeTime(after: effective) else { return 1 }
         return min(1, max(0.02, next - effective + 0.01))
@@ -707,6 +710,25 @@ final class AppModel: ObservableObject {
         WidgetCenter.shared.reloadTimelines(ofKind: LyricsTimelineStore.widgetKind)
         widgetReloadCount += 1
         lastWidgetReloadAt = now
+    }
+
+    private var lastLineReloadAt = Date.distantPast
+
+    /// 系統不會照「每句一個時間點」切換小工具（Apple 建議間隔至少約 5 分鐘），
+    /// 所以每換一句就請系統重新整理一次。App 有進行中的音訊工作階段時，
+    /// 這種重新整理不算進每日額度（Apple 文件）。
+    private func reloadWidgetForLineChange() {
+        guard lastWidgetSnapshot != nil, nowPlaying?.isPlaying == true else { return }
+        let now = Date()
+        guard now.timeIntervalSince(lastLineReloadAt) >= 1 else { return }
+        lastLineReloadAt = now
+        WidgetCenter.shared.reloadTimelines(ofKind: LyricsTimelineStore.widgetKind)
+        widgetReloadCount += 1
+        lastWidgetReloadAt = now
+        if widgetReloadCount % 50 == 0 {
+            let lag = LyricsTimelineStore.lastRenderAt.map { String(format: "%.1f", now.timeIntervalSince($0)) } ?? "—"
+            debugLog("小工具：要求重新整理 \(widgetReloadCount) 次，實際執行 \(LyricsTimelineStore.renderCount) 次，最後一次在 \(lag) 秒前（\(isForeground ? "前景" : "背景")）")
+        }
     }
 
     /// 內容相同、起點相差不到 0.3 秒 → 不必重新載入

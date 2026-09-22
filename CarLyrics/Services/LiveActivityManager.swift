@@ -110,7 +110,7 @@ final class LiveActivityManager {
 
     /// 比對系統裡的內容，確認更新有沒有真的被套用（只記錄次數，不記錄歌詞）
     private func verify(_ state: State, on activity: Activity<LyricsActivityAttributes>) {
-        let background = UIApplication.shared.applicationState == .background
+        let background = UIApplication.shared.applicationState != .active
         if activity.content.state == state {
             acceptedCount += 1
             if loggedRejectionStreak {
