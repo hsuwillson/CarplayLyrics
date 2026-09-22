@@ -72,7 +72,7 @@ private struct MainScreen: View {
     }
 }
 
-private extension ContentView {
+private extension MainScreen {
     var mainLayout: some View {
         VStack(spacing: 16) {
             ConnectionStatusBar()
