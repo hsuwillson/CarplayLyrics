@@ -36,8 +36,11 @@ jobs:
             > test.log 2>&1 && status=0 || status=$?
           grep -E "error:|Test Case .* (passed|failed)|Executed|TEST" test.log || true
           if [ "$status" -ne 0 ]; then
-            echo "::error::單元測試失敗（exit $status），錯誤如下："
-            grep -E "error:|failed" test.log | head -60
+            echo "::error::單元測試失敗（exit $status）"
+            grep -E "error:|failed|Failing tests|Testing failed|Unable to|Could not" test.log | head -60
+            # 做成 annotation，在 Actions 頁面上直接看得到
+            grep -E "error:|failed|Unable to|Could not" test.log | sort -u | head -20 | cut -c1-300 | sed 's/^/::error::/'
+            tail -25 test.log | cut -c1-300 | sed 's/^/::notice::/'
             exit "$status"
           fi
 
