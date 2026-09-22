@@ -1,0 +1,54 @@
+name: CarLyrics
+options:
+  bundleIdPrefix: com.willsonhsu
+  deploymentTarget:
+    iOS: "26.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    CODE_SIGN_STYLE: Automatic
+    # 在 Xcode 的 Signing & Capabilities 選 Team，或在這裡填入 10 碼 Team ID 後重跑 xcodegen
+    DEVELOPMENT_TEAM: ""
+    TARGETED_DEVICE_FAMILY: "1"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+
+targets:
+  CarLyrics:
+    type: application
+    platform: iOS
+    sources:
+      - path: CarLyrics
+      - path: Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.willsonhsu.CarLyrics
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_FILE: Config/CarLyrics-Info.plist
+        INFOPLIST_KEY_CFBundleDisplayName: CarLyrics
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
+        CODE_SIGN_ENTITLEMENTS: Config/CarLyrics.entitlements
+    dependencies:
+      - target: CarLyricsWidget
+
+  CarLyricsWidget:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: CarLyricsWidget
+      - path: Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.willsonhsu.CarLyrics.Widget
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_FILE: Config/CarLyricsWidget-Info.plist
+        INFOPLIST_KEY_CFBundleDisplayName: CarLyrics Widget
+        CODE_SIGN_ENTITLEMENTS: Config/CarLyricsWidget.entitlements
+        SKIP_INSTALL: YES
+    dependencies:
+      - sdk: WidgetKit.framework
+      - sdk: SwiftUI.framework
