@@ -80,16 +80,28 @@ jobs:
           lipo -info "$APP/PlugIns/CarLyricsWidget.appex/CarLyricsWidget"
           ls -la "$APP"
 
-      # 診斷用：不含 Widget Extension、也沒有簽章的最小版本，用來判斷 Sideloadly 失敗的原因
-      - name: Package minimal IPA (diagnostic)
+      # 診斷用變體（都用 ad-hoc 簽章、不帶 entitlements，讓 Sideloadly 重簽）：
+      #   CarLyrics-noappgroup.ipa：有 Widget Extension，沒有 App Group
+      #   CarLyrics-minimal.ipa   ：沒有 Widget Extension，沒有 App Group
+      - name: Package diagnostic IPAs
         run: |
-          rm -rf Payload-min && mkdir -p Payload-min/Payload
-          cp -R build/Build/Products/Release-iphoneos/CarLyrics.app Payload-min/Payload/
-          rm -rf Payload-min/Payload/CarLyrics.app/PlugIns
-          codesign --remove-signature Payload-min/Payload/CarLyrics.app
-          rm -rf Payload-min/Payload/CarLyrics.app/_CodeSignature
-          (cd Payload-min && ditto -c -k --norsrc --keepParent Payload ../CarLyrics-minimal.ipa)
-          unzip -l CarLyrics-minimal.ipa
+          SRC=build/Build/Products/Release-iphoneos/CarLyrics.app
+          make_ipa () {  # $1=輸出檔名 $2=是否保留 PlugIns(yes/no)
+            rm -rf stage && mkdir -p stage/Payload
+            cp -R "$SRC" stage/Payload/
+            APPD=stage/Payload/CarLyrics.app
+            if [ "$2" = "no" ]; then
+              rm -rf "$APPD/PlugIns"
+            else
+              codesign -f -s - "$APPD/PlugIns/CarLyricsWidget.appex"
+            fi
+            codesign -f -s - "$APPD"
+            codesign -dv "$APPD" 2>&1 | head -5
+            (cd stage && ditto -c -k --norsrc --keepParent Payload "../$1")
+            unzip -l "$1"
+          }
+          make_ipa CarLyrics-noappgroup.ipa yes
+          make_ipa CarLyrics-minimal.ipa no
 
       # 固定網址，可直接下載 .ipa（不會被包成 zip）：
       # https://github.com/<owner>/<repo>/releases/download/latest-build/CarLyrics.ipa
@@ -98,7 +110,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release delete latest-build --yes --cleanup-tag || true
-          gh release create latest-build CarLyrics.ipa CarLyrics-minimal.ipa \
+          gh release create latest-build CarLyrics.ipa CarLyrics-noappgroup.ipa CarLyrics-minimal.ipa \
             --prerelease \
             --title "Latest build #${{ github.run_number }}" \
             --notes "Commit ${{ github.sha }}（未簽署，請用 Sideloadly 安裝）" \
