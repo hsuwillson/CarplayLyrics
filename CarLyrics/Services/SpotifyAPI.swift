@@ -33,11 +33,20 @@ enum SpotifyAPIError: LocalizedError {
 
 enum PlayerCommand: String {
     case previous, next, play, pause
+    /// 從頭播放目前這首歌
+    case restart
 
     var method: String {
         switch self {
         case .previous, .next: return "POST"
-        case .play, .pause: return "PUT"
+        case .play, .pause, .restart: return "PUT"
+        }
+    }
+
+    var path: String {
+        switch self {
+        case .restart: return "seek?position_ms=0"
+        default: return rawValue
         }
     }
 }
@@ -58,7 +67,7 @@ final class SpotifyAPI {
 
     private func send(_ command: PlayerCommand, retryOn401: Bool) async throws {
         let token = try await auth.validAccessToken()
-        var request = URLRequest(url: URL(string: "https://api.spotify.com/v1/me/player/\(command.rawValue)")!)
+        var request = URLRequest(url: URL(string: "https://api.spotify.com/v1/me/player/\(command.path)")!)
         request.httpMethod = command.method
         request.httpBody = Data()
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -80,6 +89,22 @@ final class SpotifyAPI {
         default:
             throw SpotifyAPIError.http(status, body)
         }
+    }
+
+    /// 播放佇列的下一首（用來預先載入歌詞）；失敗時回傳 nil
+    func nextInQueue() async -> NowPlaying? {
+        guard let token = try? await auth.validAccessToken() else { return nil }
+        var request = URLRequest(url: URL(string: "https://api.spotify.com/v1/me/player/queue")!)
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = 10
+        guard let result = try? await URLSession.shared.data(for: request),
+              (result.1 as? HTTPURLResponse)?.statusCode == 200,
+              let r = try? JSONDecoder().decode(QueueResponse.self, from: result.0),
+              let item = r.queue.first, let id = item.id else { return nil }
+        let artists = item.artists?.map(\.name) ?? []
+        return NowPlaying(trackID: id, title: item.name, artist: artists.joined(separator: ", "),
+                          primaryArtist: artists.first ?? "", album: item.album?.name ?? "",
+                          duration: TimeInterval(item.duration_ms) / 1000, progress: 0, isPlaying: false)
     }
 
     /// `fullPlayer = true` 時改用 GET /v1/me/player（currently-playing 回傳過期資料時的備援）
@@ -136,6 +161,10 @@ final class SpotifyAPI {
             throw SpotifyAPIError.http(http.statusCode, body)
         }
     }
+}
+
+private struct QueueResponse: Decodable {
+    let queue: [CurrentlyPlayingResponse.Item]
 }
 
 private struct CurrentlyPlayingResponse: Decodable {

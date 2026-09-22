@@ -11,10 +11,9 @@ struct CarLyricsApp: App {
                 .environmentObject(model)
         }
         .onChange(of: scenePhase) { _, phase in
-            // 階段 4 會改成背景也持續執行
             switch phase {
-            case .active: model.start()
-            case .background: model.stop()
+            case .active: model.appBecameActive()
+            case .background: model.appEnteredBackground()
             default: break
             }
         }

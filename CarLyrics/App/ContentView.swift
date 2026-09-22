@@ -12,6 +12,7 @@ struct ContentView: View {
                     NowPlayingCard()
                     LyricsCard()
                     OffsetCard()
+                    DrivingModeCard()
                 }
                 .padding()
             }
@@ -80,7 +81,7 @@ private struct NowPlayingCard: View {
                 .foregroundStyle(.secondary)
 
                 HStack(spacing: 44) {
-                    Button { model.control(.previous) } label: {
+                    Button { model.previousOrRestart() } label: {
                         Image(systemName: "backward.fill")
                     }
                     Button { model.control(np.isPlaying ? .pause : .play) } label: {
@@ -161,6 +162,22 @@ private struct OffsetCard: View {
                     .monospacedDigit()
             }
             Text("歌詞比聲音慢就調大，比聲音快就調小")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding()
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16))
+    }
+}
+
+private struct DrivingModeCard: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Toggle("背景持續執行", isOn: $model.backgroundEnabled)
+            Toggle("Live Activity（鎖定畫面 / CarPlay）", isOn: $model.liveActivityEnabled)
+            Text("開車前先打開一次 CarLyrics 再鎖定手機；Live Activity 只能在 App 開著時啟動。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

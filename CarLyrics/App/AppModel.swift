@@ -7,6 +7,8 @@ final class AppModel: ObservableObject {
     let auth = SpotifyAuth()
     private lazy var api = SpotifyAPI(auth: auth)
     private let lyricsService = LyricsService()
+    private let backgroundKeeper = BackgroundKeeper()
+    private let liveActivity = LiveActivityManager()
     private var engine = LyricsSyncEngine()
 
     @Published private(set) var nowPlaying: NowPlaying?
@@ -22,6 +24,27 @@ final class AppModel: ObservableObject {
         didSet { UserDefaults.standard.set(offset, forKey: "lyricsOffset") }
     }
 
+    /// 背景持續執行（鎖定畫面、開車時也能更新歌詞）
+    @Published var backgroundEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(backgroundEnabled, forKey: "backgroundEnabled")
+            if backgroundEnabled { backgroundKeeper.start() } else { backgroundKeeper.stop() }
+        }
+    }
+
+    /// 在鎖定畫面 / 靈動島 / CarPlay 顯示 Live Activity
+    @Published var liveActivityEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(liveActivityEnabled, forKey: "liveActivityEnabled")
+            if liveActivityEnabled { pushLiveActivity() } else { liveActivity.end() }
+        }
+    }
+
+    /// 沒有播放超過這個秒數，就結束 Live Activity
+    private let idleEndInterval: TimeInterval = 300
+    private var idleSince: Date?
+    private var prefetchedTrackID: String?
+
     private var pollTask: Task<Void, Never>?
     private var tickTask: Task<Void, Never>?
     private var lyricsTask: Task<Void, Never>?
@@ -31,11 +54,30 @@ final class AppModel: ObservableObject {
 
     init() {
         offset = UserDefaults.standard.double(forKey: "lyricsOffset")
+        backgroundEnabled = UserDefaults.standard.object(forKey: "backgroundEnabled") as? Bool ?? true
+        liveActivityEnabled = UserDefaults.standard.object(forKey: "liveActivityEnabled") as? Bool ?? true
+    }
+
+    // MARK: 前景 / 背景
+
+    func appBecameActive() {
+        start()
+        liveActivity.adoptExisting()
+        pushLiveActivity()
+    }
+
+    func appEnteredBackground() {
+        if backgroundEnabled && backgroundKeeper.isRunning {
+            debugLog("進入背景，持續執行")
+        } else {
+            stop()
+        }
     }
 
     // MARK: 生命週期
 
     func start() {
+        if backgroundEnabled { backgroundKeeper.start() }
         guard pollTask == nil else { return }
         debugLog("開始輪詢")
         pollTask = Task { [weak self] in
@@ -81,6 +123,7 @@ final class AppModel: ObservableObject {
 
     func logout() {
         auth.logout()
+        liveActivity.end()
         clearPlayback()
         statusMessage = ""
         debugLog("已登出")
@@ -112,6 +155,14 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// 超過這個秒數按 ⏮ 會從頭播放，否則跳到上一首（和一般音樂 App 一樣）
+    static let restartThreshold: TimeInterval = 3
+
+    func previousOrRestart() {
+        let pos = engine.position(at: Date()) ?? 0
+        control(pos > Self.restartThreshold ? .restart : .previous)
+    }
+
     func clearLyricsCache() {
         lyricsService.clearCache()
         debugLog("已清除歌詞快取")
@@ -131,6 +182,7 @@ final class AppModel: ObservableObject {
             useFullPlayer = false
             switch try await api.currentlyPlaying(fullPlayer: full) {
             case .playing(let np, let measuredAt):
+                idleSince = nil
                 handle(np, measuredAt: measuredAt)
                 statusMessage = np.isPlaying ? "播放中" : "已暫停"
                 if quotaMode { return 6 }
@@ -140,6 +192,10 @@ final class AppModel: ObservableObject {
             case .nothing:
                 if nowPlaying != nil { debugLog("Spotify 沒有在播放") }
                 clearPlayback()
+                if idleSince == nil { idleSince = Date() }
+                if let since = idleSince, Date().timeIntervalSince(since) > idleEndInterval, liveActivity.isActive {
+                    liveActivity.end()
+                }
                 statusMessage = "Spotify 沒有在播放"
                 return 10
 
@@ -172,6 +228,7 @@ final class AppModel: ObservableObject {
             debugLog("偵測到拖動進度 → \(formatTime(np.progress))")
         case .playStateChanged:
             debugLog(np.isPlaying ? "繼續播放" : "暫停")
+            pushLiveActivity()
         case .stale:
             debugLog("Spotify 進度沒有前進（\(formatTime(np.progress))），忽略並改用 /me/player 重試")
             useFullPlayer = true
@@ -223,6 +280,8 @@ final class AppModel: ObservableObject {
             }
             debugLog("歌詞：\(self.lyricsStatus)")
             self.tick()
+            self.pushLiveActivity()
+            self.prefetchNext()
         }
     }
 
@@ -231,7 +290,47 @@ final class AppModel: ObservableObject {
         guard let pos = engine.position(at: Date()) else { return }
         position = pos
         let d = LyricsDisplay(lines: lines, position: pos + offset)
-        if d != display { display = d }
+        if d != display {
+            display = d
+            pushLiveActivity()
+        }
+    }
+
+    // MARK: Live Activity
+
+    private func pushLiveActivity() {
+        guard liveActivityEnabled, let np = nowPlaying else { return }
+        let current: String
+        let next: String
+        if !lines.isEmpty {
+            current = display.current.isEmpty ? "♪" : display.current
+            next = display.next
+        } else {
+            current = lyricsStatus
+            next = ""
+        }
+        liveActivity.update(LyricsActivityAttributes.ContentState(
+            currentLine: current,
+            nextLine: next,
+            trackName: np.title,
+            artistName: np.artist,
+            isPlaying: np.isPlaying
+        ))
+    }
+
+    // MARK: 預先載入下一首歌詞
+
+    private func prefetchNext() {
+        Task { [weak self] in
+            guard let self, let next = await self.api.nextInQueue(),
+                  next.trackID != self.nowPlaying?.trackID,
+                  next.trackID != self.prefetchedTrackID else { return }
+            self.prefetchedTrackID = next.trackID
+            let query = TrackQuery(trackID: next.trackID, title: next.title, artist: next.primaryArtist,
+                                   album: next.album, duration: next.duration)
+            let result = await self.lyricsService.lyrics(for: query)
+            debugLog("預先載入下一首：\(next.title)（\(result.shortDescription)）")
+        }
     }
 }
 

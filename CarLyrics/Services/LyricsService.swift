@@ -14,6 +14,16 @@ enum LyricsResult: Codable, Equatable {
     case instrumental
     case notFound
     case failed(String)
+
+    var shortDescription: String {
+        switch self {
+        case .synced: return "同步歌詞"
+        case .plain: return "未同步歌詞"
+        case .instrumental: return "純音樂"
+        case .notFound: return "找不到"
+        case .failed: return "失敗"
+        }
+    }
 }
 
 /// 從 LRCLIB 取得歌詞，並以 Spotify 曲目 ID 為 key 快取在本機
