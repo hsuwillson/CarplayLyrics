@@ -201,6 +201,13 @@ jobs:
           version["date"] = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
           version["size"] = size
           version["localizedDescription"] = "CI #${{ github.run_number }}（commit ${{ github.sha }}）"
+          # 舊版 AltStore / SideStore 只看 app 層的這幾個欄位
+          app = data["apps"][0]
+          app["version"] = version["version"]
+          app["versionDate"] = version["date"]
+          app["versionDescription"] = version["localizedDescription"]
+          app["downloadURL"] = version["downloadURL"]
+          app["size"] = size
           json.dump(data, open(path, "w"), ensure_ascii=False, indent=2)
           PY
           git config user.name "github-actions"
