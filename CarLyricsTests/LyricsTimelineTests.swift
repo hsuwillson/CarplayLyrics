@@ -41,6 +41,16 @@ final class LyricsTimelineTests: XCTestCase {
         let f = LyricsTimelineSnapshot.idle("沒有播放", at: t0).frames(from: t0)
         XCTAssertEqual(f.count, 1)
         XCTAssertEqual(f[0].current, "沒有播放")
+        XCTAssertEqual(f[0].upcoming, [], "閒置時不要再顯示一次「CarLyrics」")
+    }
+
+    /// 暫停 / 搜尋中：第二行是歌手，不重複歌名
+    func testMessageFrameShowsArtistNotTitle() {
+        var s = snapshot(playing: false)
+        s.message = "⏸ 測試歌"
+        let f = s.frames(from: t0)
+        XCTAssertEqual(f[0].current, "⏸ 測試歌")
+        XCTAssertEqual(f[0].upcoming, ["測試歌手"])
     }
 
     func testLimit() {

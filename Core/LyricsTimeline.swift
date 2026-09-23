@@ -65,9 +65,10 @@ struct LyricsTimelineSnapshot: Codable, Equatable, Sendable {
     /// 從 `now` 開始的畫面：第一個是現在，之後每換一句一個
     func frames(from now: Date, limit: Int = 150) -> [LyricsTimelineFrame] {
         guard isPlaying, !lines.isEmpty else {
+            // 小工具標題列已經有歌名：第二行放歌手，不要把歌名再重複一次（暫停、搜尋中、閒置都一樣）
             return [LyricsTimelineFrame(date: now, index: nil,
                                         current: message ?? title,
-                                        upcoming: [message == nil ? artist : title].filter { !$0.isEmpty })]
+                                        upcoming: [artist].filter { !$0.isEmpty })]
         }
         let position = now.timeIntervalSince(songStart)
         let currentIndex = lines.index(at: position)
@@ -82,7 +83,7 @@ struct LyricsTimelineSnapshot: Codable, Equatable, Sendable {
         // 收尾：App 若被系統終止，時間軸播完不會停在最後一句假裝還在同步
         if upper >= lines.count, let end = endOfSong, let last = result.last, end > last.date {
             result.append(LyricsTimelineFrame(date: end, index: nil, current: "♪ 等待下一首",
-                                              upcoming: ["沒有更新的話，打開 CarLyrics"]))
+                                              upcoming: ["沒跟上就打開 CarLyrics"]))
         }
         return result
     }
