@@ -407,7 +407,9 @@ final class LiveActivityManager {
             lastError = nil
             startedInCar = carConnected
             observe(new)
-            debugLog("即時動態已開始（staleDate \(Int(lastStaleInterval ?? 0)) 秒後；CarPlay \(carConnected ? "已連接" : "未連接")；\(isInBackground ? "背景" : "前景")）")
+            let carText = carConnected ? "已連接" : "未連接"
+            let phaseText = isInBackground ? "背景" : "前景"
+            debugLog("即時動態已開始（staleDate \(Int(lastStaleInterval ?? 0)) 秒後；CarPlay \(carText)；\(phaseText)）")
         } catch {
             startBlockedUntilForeground = true
             lastError = error.localizedDescription

@@ -109,14 +109,22 @@ private struct DrivingSection: View {
         } header: {
             Text("實驗")
         } footer: {
-            Text("iOS 只擋「只有背景音訊」的 App 更新鎖定畫面。打開後，連上 CarPlay 且歌詞顯示中時會用最低精準度的定位，讓手機鎖定後也有機會繼續更新 CarPlay 歌詞。只在車上用，下車就停；不記錄、不上傳位置（狀態列會出現藍色定位指示，是系統規定）。有沒有效請看「診斷」的「理由統計」。")
+            Text("""
+                iOS 只擋「只有背景音訊」的 App 更新鎖定畫面。打開後，連上 CarPlay 且歌詞顯示中時會用最低精準度的定位，\
+                讓手機鎖定後也有機會繼續更新 CarPlay 歌詞。只在車上用，下車就停；不記錄、不上傳位置（狀態列會出現藍色定位指示，\
+                是系統規定）。有沒有效請看「診斷」的「理由統計」。
+                """)
         }
     }
 
     private func footer(for mode: LiveActivityMode) -> String {
         switch mode {
         case .whileDriving:
-            return "連上 CarPlay 才顯示，下車自動收起。iOS 只讓 App 在打開時開始顯示，所以上車後要打開一次 CarLyrics（可用捷徑自動化，見「設定檢查」）。手機鎖定後 iOS 會擋掉更新，CarPlay 歌詞會停住——開車時讓 CarLyrics 留在螢幕上（專注模式幾乎全黑），或試試下面的實驗。"
+            return """
+                連上 CarPlay 才顯示，下車自動收起。iOS 只讓 App 在打開時開始顯示，所以上車後要打開一次 CarLyrics（可用捷徑自動化，\
+                見「設定檢查」）。手機鎖定後 iOS 會擋掉更新，CarPlay 歌詞會停住——開車時讓 CarLyrics 留在螢幕上（專注模式幾乎全黑）\
+                ，或試試下面的實驗。
+                """
         case .always:
             return "播歌時就在鎖定畫面顯示歌詞；動態島會多一個小圖示（系統規定）。沒在播放一陣子會自動收起。手機鎖定後 iOS 會擋掉更新，開車時請讓 CarLyrics 留在螢幕上。"
         case .off:
