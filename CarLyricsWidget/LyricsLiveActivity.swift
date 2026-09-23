@@ -1,3 +1,4 @@
+import AppIntents
 import ActivityKit
 import SwiftUI
 import WidgetKit
@@ -25,7 +26,10 @@ struct LyricsLiveActivity: Widget {
                         .padding(.trailing, 4)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
-                    ExpandedLyrics(state: context.state, isStale: context.isStale)
+                    VStack(spacing: 8) {
+                        ExpandedLyrics(state: context.state, isStale: context.isStale)
+                        ActivityControls(isPlaying: context.state.isPlaying, compact: true)
+                    }
                 }
             } compactLeading: {
                 PlayingIcon(isPlaying: context.state.isPlaying)
@@ -98,6 +102,34 @@ private struct ActivityProgress: View {
 
 /// 背景更新被系統暫停時的說明
 private let staleMessage = "鎖定畫面暫停更新 · 打開 App 或看小工具"
+
+/// 鎖定畫面 / 動態島上的播放控制（intent 在 App 程序執行）
+private struct ActivityControls: View {
+    let isPlaying: Bool
+    var compact = false
+
+    private var size: CGFloat { compact ? 22 : 26 }
+
+    var body: some View {
+        HStack(spacing: compact ? 12 : 16) {
+            Button(intent: PreviousTrackIntent()) {
+                Image(systemName: "backward.fill")
+            }
+            .accessibilityLabel("上一首")
+            Button(intent: PlayPauseIntent()) {
+                Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+            }
+            .accessibilityLabel(isPlaying ? "暫停" : "播放")
+            Button(intent: NextTrackIntent()) {
+                Image(systemName: "forward.fill")
+            }
+            .accessibilityLabel("下一首")
+        }
+        .font(.system(size: size, weight: .semibold))
+        .buttonStyle(.plain)
+        .foregroundStyle(Color.primary)
+    }
+}
 
 /// 目前句（間奏時改成系統自己推進的倒數）
 private struct CurrentLineView: View {
@@ -209,7 +241,7 @@ private struct LockScreenActivityView: View {
     let isStale: Bool
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .center, spacing: 12) {
             ActivityArtwork(file: state.artworkFile, isPlaying: state.isPlaying, size: 44)
             VStack(alignment: .leading, spacing: 6) {
                 header
@@ -226,6 +258,7 @@ private struct LockScreenActivityView: View {
                 }
                 ActivityProgress(state: state)
             }
+            ActivityControls(isPlaying: state.isPlaying)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)

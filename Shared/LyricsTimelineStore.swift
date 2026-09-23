@@ -1,4 +1,21 @@
 import Foundation
+import WidgetKit
+
+/// 時間軸的寫入端（正式版寫 App Group + 請系統重新整理；測試可替換）
+protocol TimelineSink: Sendable {
+    @discardableResult func save(_ snapshot: LyricsTimelineSnapshot) -> Bool
+    func reload()
+    var renderCount: Int { get }
+    var lastRenderAt: Date? { get }
+}
+
+struct AppGroupTimelineSink: TimelineSink {
+    @discardableResult
+    func save(_ snapshot: LyricsTimelineSnapshot) -> Bool { LyricsTimelineStore.save(snapshot) }
+    func reload() { WidgetCenter.shared.reloadTimelines(ofKind: LyricsTimelineStore.widgetKind) }
+    var renderCount: Int { LyricsTimelineStore.renderCount }
+    var lastRenderAt: Date? { LyricsTimelineStore.lastRenderAt }
+}
 
 /// 透過 App Group 在 App 與小工具之間傳遞歌詞時間軸
 enum LyricsTimelineStore {

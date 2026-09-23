@@ -131,11 +131,13 @@ enum SpotifyResponseParser {
                         measuredAt: measuredAt, sentAt: sentAt)
     }
 
-    /// 解析 GET /me/player/queue：回傳佇列的第一首
-    static func parseQueueFirst(_ data: Data) -> NowPlaying? {
-        guard let r = try? JSONDecoder().decode(QueueResponse.self, from: data),
-              let item = r.queue.first, let id = item.id else { return nil }
-        return nowPlaying(item, id: id, progressMs: 0, isPlaying: false)
+    /// 解析 GET /me/player/queue：整個佇列（跳過沒有 id 的項目，例如本機檔案 / Podcast）
+    static func parseQueue(_ data: Data) -> [NowPlaying] {
+        guard let r = try? JSONDecoder().decode(QueueResponse.self, from: data) else { return [] }
+        return r.queue.compactMap { item in
+            guard let id = item.id else { return nil }
+            return nowPlaying(item, id: id, progressMs: 0, isPlaying: false)
+        }
     }
 
     private static func nowPlaying(_ item: CurrentlyPlayingResponse.Item, id: String, progressMs: Int, isPlaying: Bool) -> NowPlaying {

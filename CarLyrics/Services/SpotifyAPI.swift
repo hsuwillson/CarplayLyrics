@@ -4,7 +4,8 @@ import Foundation
 protocol PlayerClient: Sendable {
     func currentlyPlaying(fullPlayer: Bool) async throws -> PlayerPollResponse
     func send(_ command: PlayerCommand) async throws
-    func nextInQueue() async -> NowPlaying?
+    /// 播放佇列（最多 20 首，用來預先載入歌詞）
+    func queue() async -> [NowPlaying]
 }
 
 /// 一次輪詢的結果 + 回應大小（診斷用）
@@ -61,15 +62,15 @@ final class SpotifyAPI: PlayerClient, @unchecked Sendable {
         }
     }
 
-    /// 播放佇列的下一首（用來預先載入歌詞）；失敗時回傳 nil
-    func nextInQueue() async -> NowPlaying? {
-        guard let accessToken = try? await token() else { return nil }
+    /// 播放佇列（Spotify 最多回傳 20 首）
+    func queue() async -> [NowPlaying] {
+        guard let accessToken = try? await token() else { return [] }
         var request = URLRequest(url: URL(string: "https://api.spotify.com/v1/me/player/queue?market=from_token")!)
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         request.timeoutInterval = 10
         guard let (data, response) = try? await session.data(for: request),
-              (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
-        return SpotifyResponseParser.parseQueueFirst(data)
+              (response as? HTTPURLResponse)?.statusCode == 200 else { return [] }
+        return SpotifyResponseParser.parseQueue(data)
     }
 
     /// `fullPlayer = true` 時改用 GET /v1/me/player（currently-playing 回傳過期資料時的備援）

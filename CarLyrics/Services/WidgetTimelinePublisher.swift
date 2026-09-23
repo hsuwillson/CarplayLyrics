@@ -1,11 +1,16 @@
 import Foundation
-import WidgetKit
 
 /// 把整首歌的時間軸寫進 App Group，並在需要時請系統重新整理小工具。
 /// - 重要事件（換歌、拖動、暫停、歌詞載入、調整延遲）：一定重新整理
 /// - 換句：交給 `WidgetReloadPolicy` 決定（被系統節流時自動改用段落模式）
 @MainActor
 final class WidgetTimelinePublisher {
+    private let sink: TimelineSink
+
+    init(sink: TimelineSink = AppGroupTimelineSink()) {
+        self.sink = sink
+    }
+
     private var lastSnapshot: LyricsTimelineSnapshot?
     private var pending: LyricsTimelineSnapshot?
     private var pendingTask: Task<Void, Never>?
@@ -17,8 +22,8 @@ final class WidgetTimelinePublisher {
     private var loggedMode: LyricsTimelineMode = .perLine
 
     var mode: LyricsTimelineMode { policy.mode(now: Date()) }
-    var renderCount: Int { LyricsTimelineStore.renderCount }
-    var lastRenderAt: Date? { LyricsTimelineStore.lastRenderAt }
+    var renderCount: Int { sink.renderCount }
+    var lastRenderAt: Date? { sink.lastRenderAt }
 
     var modeDescription: String {
         switch mode {
@@ -64,7 +69,8 @@ final class WidgetTimelinePublisher {
     }
 
     private func write(_ snapshot: LyricsTimelineSnapshot, reloadSystem: Bool) {
-        guard LyricsTimelineStore.save(snapshot) else {
+        // 寫檔失敗時不要更新 lastSnapshot，否則之後內容相同就再也不會重試
+        guard sink.save(snapshot) else {
             debugLog("小工具時間軸寫入失敗（App Group 無法使用）")
             return
         }
@@ -91,7 +97,7 @@ final class WidgetTimelinePublisher {
             if var s = lastSnapshot {
                 s.mode = mode
                 lastSnapshot = s
-                LyricsTimelineStore.save(s)
+                sink.save(s)
                 reload()
                 return
             }
@@ -109,7 +115,7 @@ final class WidgetTimelinePublisher {
     }
 
     private func reload() {
-        WidgetCenter.shared.reloadTimelines(ofKind: LyricsTimelineStore.widgetKind)
+        sink.reload()
         requestCount += 1
         lastRequestAt = Date()
     }

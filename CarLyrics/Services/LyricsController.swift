@@ -10,7 +10,8 @@ final class LyricsController {
     @ObservationIgnored private let provider: LyricsProviding
     @ObservationIgnored private var task: Task<Void, Never>?
     @ObservationIgnored private var prefetchTask: Task<Void, Never>?
-    @ObservationIgnored private var prefetchedTrackID: String?
+    /// 已經預載過的佇列指紋（前三首的 ID）
+    @ObservationIgnored private var prefetchedFingerprint: String?
     @ObservationIgnored private(set) var query: TrackQuery?
     /// 歌詞狀態改變後通知 AppModel（重算目前句、推送即時動態 / 小工具）
     @ObservationIgnored var onChange: (() -> Void)?
@@ -117,18 +118,36 @@ final class LyricsController {
 
     // MARK: 預先載入
 
-    /// 預先載入播放佇列的下一首（`fetchNext` 回傳下一首）
-    func prefetch(_ fetchNext: @escaping @Sendable () async -> NowPlaying?) {
+    /// 預先載入播放佇列的歌詞。
+    /// - Parameters:
+    ///   - queue: 回傳播放佇列（第一首是下一首）
+    ///   - wholeQueue: true（Wi-Fi、非低耗電）時整個佇列都先載入，隧道 / 地下停車場也有歌詞
+    func prefetch(wholeQueue: Bool, queue fetchQueue: @escaping @Sendable () async -> [NowPlaying]) {
         prefetchTask?.cancel()
         let currentID = query?.trackID
-        let already = prefetchedTrackID
+        let already = prefetchedFingerprint
         prefetchTask = Task { [weak self, provider] in
-            guard let next = await fetchNext(), !Task.isCancelled,
-                  next.trackID != currentID, next.trackID != already else { return }
-            let result = await provider.lyrics(for: LyricsController.query(for: next))
-            guard !Task.isCancelled, let result else { return }
-            self?.prefetchedTrackID = next.trackID
-            debugLog("預先載入下一首：\(next.title)（\(result.shortDescription)）")
+            let list = await fetchQueue()
+            guard !Task.isCancelled, let next = list.first, next.trackID != currentID else { return }
+            let fingerprint = list.prefix(3).map(\.trackID).joined(separator: "-")
+            guard fingerprint != already else { return }
+            self?.prefetchedFingerprint = fingerprint
+
+            let targets = wholeQueue ? Array(list.prefix(20)) : [next]
+            var loaded = 0
+            for track in targets {
+                guard !Task.isCancelled else { return }
+                let result = await provider.lyrics(for: LyricsController.query(for: track))
+                if result != nil { loaded += 1 }
+                if track.trackID == next.trackID, let result {
+                    debugLog("預先載入下一首：\(next.title)（\(result.shortDescription)）")
+                }
+                // 對 LRCLIB 客氣一點
+                if targets.count > 1 { try? await Task.sleep(for: .seconds(1)) }
+            }
+            if targets.count > 1 {
+                debugLog("已預先載入播放佇列 \(loaded)/\(targets.count) 首的歌詞")
+            }
         }
     }
 

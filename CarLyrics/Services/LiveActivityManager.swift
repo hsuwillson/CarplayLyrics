@@ -13,12 +13,7 @@ import UIKit
 final class LiveActivityManager {
     typealias State = LyricsActivityAttributes.ContentState
 
-    enum Priority {
-        /// 換句：背景被擋時略過
-        case routine
-        /// 換歌、暫停、播放：背景被擋時仍嘗試（也用來偵測系統行為是否改變）
-        case important
-    }
+    typealias Priority = LiveActivityUpdatePolicy.Priority
 
     private var activity: Activity<LyricsActivityAttributes>?
     private var lastState: State?
@@ -42,6 +37,7 @@ final class LiveActivityManager {
     private(set) var backgroundBlocked = false
     private var backgroundRejectStreak = 0
     private var loggedRejectionStreak = false
+    private let policy = LiveActivityUpdatePolicy()
 
     /// 超過這個秒數沒更新，系統會把即時動態標成 stale
     private static let staleAfter: TimeInterval = 120
@@ -98,21 +94,27 @@ final class LiveActivityManager {
 
     func update(_ model: ActivityContentModel, priority: Priority = .routine) {
         let state = State(model)
-        guard isActive, let activity else {
-            self.activity = nil
+        let decision = policy.decide(.init(isActive: isActive,
+                                           startBlockedUntilForeground: startBlockedUntilForeground,
+                                           backgroundBlocked: backgroundBlocked,
+                                           isInBackground: isInBackground,
+                                           priority: priority,
+                                           sameAsLast: state == lastState))
+        switch decision {
+        case .start:
+            activity = nil
             lastState = nil
-            guard !startBlockedUntilForeground else { return }
             start(state)
-            return
-        }
-        guard state != lastState else { return }
-        if backgroundBlocked && priority == .routine && isInBackground {
+        case .send:
+            guard let activity else { return }
+            send(state, to: activity)
+        case .store:
             // 被擋就不白做工；記住最新內容，回前景或下一次重要更新時送出
             lastState = state
             hasUnsentState = true
-            return
+        case .skip:
+            break
         }
-        send(state, to: activity)
     }
 
     /// 內容沒變也定期重送，避免被標成 stale（由輪詢迴圈呼叫）
@@ -180,7 +182,7 @@ final class LiveActivityManager {
             lastMismatchField = mismatch
             if background {
                 backgroundRejectStreak += 1
-                if backgroundRejectStreak >= 5 && !backgroundBlocked {
+                if policy.shouldEnterBlocked(backgroundRejectStreak: backgroundRejectStreak), !backgroundBlocked {
                     backgroundBlocked = true
                     debugLog("即時動態背景更新被系統擋住，改為只在換歌 / 暫停時嘗試")
                 }

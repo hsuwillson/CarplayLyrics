@@ -139,6 +139,7 @@ private struct LyricsSection: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
+        @Bindable var model = model
         Section {
             LabeledContent("狀態", value: model.lyrics.state.label)
             if let np = model.nowPlaying {
@@ -152,6 +153,9 @@ private struct LyricsSection: View {
                     Label("取消手動指定，改回自動搜尋", systemImage: "arrow.uturn.backward")
                 }
             }
+            Toggle(isOn: $model.prefetchQueueOnWiFi) {
+                Label("Wi-Fi 時預先載入整個播放佇列", systemImage: "wifi")
+            }
             Button {
                 model.lyrics.clearCache()
             } label: {
@@ -160,7 +164,7 @@ private struct LyricsSection: View {
         } header: {
             Text("歌詞")
         } footer: {
-            Text("要換成其他版本的歌詞或匯入 LRC 檔，請用主畫面的「選擇歌詞」。")
+            Text("要換成其他版本的歌詞或匯入 LRC 檔，請用主畫面的「選擇歌詞」。預先載入會在換歌時進行，進隧道或地下停車場也看得到歌詞。")
         }
     }
 }

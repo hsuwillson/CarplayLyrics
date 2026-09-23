@@ -342,7 +342,7 @@ final class MiscCoverageTests: XCTestCase {
                     CurrentlyPlayingResponse.Image(url: "https://example.com/y.jpg", width: 60, height: 60)]
         XCTAssertEqual(SpotifyResponseParser.pick(imgs, target: 64)?.absoluteString, "https://example.com/y.jpg")
         let json = #"{"queue": [{"id": null, "name": "本機", "duration_ms": 1}]}"#
-        XCTAssertNil(SpotifyResponseParser.parseQueueFirst(Data(json.utf8)))
+        XCTAssertTrue(SpotifyResponseParser.parseQueue(Data(json.utf8)).isEmpty)
     }
 
     func testEnginePausedToPaused() {

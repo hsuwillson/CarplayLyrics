@@ -57,11 +57,12 @@ final class SpotifyDTOTests: XCTestCase {
     }
 
     func testQueue() {
-        let json = #"{"queue": [{"id": "q1", "name": "下一首", "duration_ms": 150000, "artists": [{"name": "丙"}]}]}"#
-        let np = SpotifyResponseParser.parseQueueFirst(Data(json.utf8))
-        XCTAssertEqual(np?.trackID, "q1")
-        XCTAssertEqual(np?.isPlaying, false)
-        XCTAssertNil(SpotifyResponseParser.parseQueueFirst(Data(#"{"queue": []}"#.utf8)))
+        let json = #"{"queue": [{"id": "q1", "name": "下一首", "duration_ms": 150000, "artists": [{"name": "丙"}]},"#
+            + #" {"id": "q2", "name": "再下一首", "duration_ms": 160000}]}"#
+        let list = SpotifyResponseParser.parseQueue(Data(json.utf8))
+        XCTAssertEqual(list.map(\.trackID), ["q1", "q2"])
+        XCTAssertEqual(list.first?.isPlaying, false)
+        XCTAssertTrue(SpotifyResponseParser.parseQueue(Data(#"{"queue": []}"#.utf8)).isEmpty)
     }
 
     func testCommandPaths() {

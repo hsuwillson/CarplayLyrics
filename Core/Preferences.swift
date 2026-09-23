@@ -12,6 +12,7 @@ final class Preferences {
         static let focusLandscapeLock = "focusLandscapeLock"
         static let autoFocusInCar = "autoFocusInCar"
         static let pendingScreen = "pendingScreen"
+        static let prefetchQueueOnWiFi = "prefetchQueueOnWiFi"
         static let lastHeartbeat = "lastHeartbeat"
         static let lastHeartbeatInBackground = "lastHeartbeatInBackground"
     }
@@ -70,6 +71,12 @@ final class Preferences {
     var autoFocusInCar: Bool {
         get { bool(Key.autoFocusInCar, default: true) }
         set { defaults.set(newValue, forKey: Key.autoFocusInCar) }
+    }
+
+    /// Wi-Fi 時預先載入整個播放佇列的歌詞（進隧道 / 地下停車場也有歌詞）
+    var prefetchQueueOnWiFi: Bool {
+        get { bool(Key.prefetchQueueOnWiFi, default: true) }
+        set { defaults.set(newValue, forKey: Key.prefetchQueueOnWiFi) }
     }
 
     /// 控制中心 / 捷徑要求開啟的畫面（App 還沒啟動時先寫在這裡）

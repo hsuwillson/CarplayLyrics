@@ -63,6 +63,9 @@ final class PreferencesTests: XCTestCase {
         XCTAssertEqual(p.focusFontScale, 1.4)
         p.globalOffset = 0.75
         XCTAssertEqual(d.double(forKey: "lyricsOffset"), 0.75)   // 沿用舊 key
+        XCTAssertTrue(p.prefetchQueueOnWiFi)
+        p.prefetchQueueOnWiFi = false
+        XCTAssertFalse(p.prefetchQueueOnWiFi)
         XCTAssertNil(p.lastHeartbeat)
         p.lastHeartbeat = (Date(timeIntervalSince1970: 100), true)
         XCTAssertEqual(p.lastHeartbeat?.inBackground, true)
