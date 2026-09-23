@@ -114,6 +114,18 @@ final class AppModel {
         didSet { preferences.autoFocusInCar = autoFocusInCar }
     }
 
+    /// 只在連上車用音訊時啟動即時動態（平常不佔用動態島）
+    var liveActivityOnlyInCar: Bool {
+        didSet {
+            preferences.liveActivityOnlyInCar = liveActivityOnlyInCar
+            if liveActivityOnlyInCar, !isCarConnected {
+                liveActivity.end()
+            } else {
+                pushLiveActivity(placeholder: true, priority: .important)
+            }
+        }
+    }
+
     /// 沒在播放時結束即時動態（不要一直佔用靈動島）
     var endActivityWhenIdle: Bool {
         didSet {
@@ -158,6 +170,7 @@ final class AppModel {
         focusLandscapeLock = preferences.focusLandscapeLock
         autoFocusInCar = preferences.autoFocusInCar
         endActivityWhenIdle = preferences.endActivityWhenIdle
+        liveActivityOnlyInCar = preferences.liveActivityOnlyInCar
         prefetchQueueOnWiFi = preferences.prefetchQueueOnWiFi
         hasSeenSetup = preferences.hasSeenSetup
         isCarConnected = SilentAudioKeeper.detectCar()
@@ -178,6 +191,15 @@ final class AppModel {
             // 上車：如果正在播歌，直接進專注模式（車架上看得比較清楚）
             if connected, self.autoFocusInCar, self.isPlaying, self.requestedScreen == nil {
                 self.requestedScreen = .focus
+            }
+            // 「只在車上顯示即時動態」：上車開、下車收
+            guard self.liveActivityOnlyInCar else { return }
+            if connected {
+                debugLog("連上車用音訊，開始即時動態")
+                self.pushLiveActivity(placeholder: true, priority: .important)
+            } else {
+                debugLog("離開車用音訊，收起即時動態")
+                self.liveActivity.end()
             }
         }
         // 冷啟動時由控制中心 / 捷徑要求的畫面（通知可能比畫面早到）
@@ -661,6 +683,8 @@ final class AppModel {
     /// 所有即時動態的推送都走這裡（統一檢查開關與登入狀態）
     private func push(_ model: ActivityContentModel, priority: LiveActivityManager.Priority) {
         guard liveActivityEnabled, auth.isLoggedIn else { return }
+        // 只在車上顯示：沒連車用音訊就不開（動態島留給其他 App）
+        guard !liveActivityOnlyInCar || isCarConnected else { return }
         liveActivity.update(model, priority: priority)
     }
 

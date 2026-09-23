@@ -12,6 +12,7 @@ final class Preferences {
         static let focusLandscapeLock = "focusLandscapeLock"
         static let autoFocusInCar = "autoFocusInCar"
         static let endActivityWhenIdle = "endActivityWhenIdle"
+        static let liveActivityOnlyInCar = "liveActivityOnlyInCar"
         static let pendingScreen = "pendingScreen"
         static let prefetchQueueOnWiFi = "prefetchQueueOnWiFi"
         static let lastHeartbeat = "lastHeartbeat"
@@ -78,6 +79,12 @@ final class Preferences {
     var endActivityWhenIdle: Bool {
         get { bool(Key.endActivityWhenIdle, default: true) }
         set { defaults.set(newValue, forKey: Key.endActivityWhenIdle) }
+    }
+
+    /// 只在連上車用音訊時啟動即時動態（平常不佔用動態島）
+    var liveActivityOnlyInCar: Bool {
+        get { bool(Key.liveActivityOnlyInCar, default: false) }
+        set { defaults.set(newValue, forKey: Key.liveActivityOnlyInCar) }
     }
 
     /// Wi-Fi 時預先載入整個播放佇列的歌詞（進隧道 / 地下停車場也有歌詞）

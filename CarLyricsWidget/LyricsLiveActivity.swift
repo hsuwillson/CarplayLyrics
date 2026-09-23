@@ -1,12 +1,12 @@
-import AppIntents
 import ActivityKit
 import SwiftUI
 import WidgetKit
 
-/// 歌詞即時動態
-/// - 鎖定畫面：封面 + 歌名列 + 目前句（大字、最多兩行）+ 下一句 + 系統自己推進的進度條
+/// 歌詞即時動態（只顯示歌詞：播放控制交給鎖定畫面上的 Spotify）
+/// - 鎖定畫面：封面 + 歌名列 + 目前句（大字、最多三行）+ 下一句 + 系統自己推進的進度條
 /// - CarPlay / Apple Watch：`.small` activity family（iOS 26 CarPlay 使用這個尺寸），目前句 + 下一句 + 細進度條
-/// - 動態島：compact 顯示目前句，expanded 顯示目前句 + 下一句
+/// - 動態島：只放一個小圖示。即時動態進行中時系統一定會佔用動態島，無法關閉，
+///   所以這裡刻意不放歌詞、不放按鈕，把佔用面積壓到最小；沒在播放時會自動收起（見 IdlePolicy）
 struct LyricsLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: LyricsActivityAttributes.self) { context in
@@ -26,19 +26,13 @@ struct LyricsLiveActivity: Widget {
                         .padding(.trailing, 4)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
-                    VStack(spacing: 8) {
-                        ExpandedLyrics(state: context.state, isStale: context.isStale)
-                        ActivityControls(isPlaying: context.state.isPlaying, compact: true)
-                    }
+                    ExpandedLyrics(state: context.state, isStale: context.isStale)
                 }
             } compactLeading: {
                 PlayingIcon(isPlaying: context.state.isPlaying)
             } compactTrailing: {
-                Text(context.state.currentLine)
-                    .font(.caption2)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                    .frame(maxWidth: 110)
+                // 刻意留白：動態島不顯示歌詞，佔用面積最小
+                EmptyView()
             } minimal: {
                 PlayingIcon(isPlaying: context.state.isPlaying)
             }
@@ -102,34 +96,6 @@ private struct ActivityProgress: View {
 
 /// 背景更新被系統暫停時的說明
 private let staleMessage = "鎖定畫面暫停更新 · 打開 App 或看小工具"
-
-/// 鎖定畫面 / 動態島上的播放控制（intent 在 App 程序執行）
-private struct ActivityControls: View {
-    let isPlaying: Bool
-    var compact = false
-
-    private var size: CGFloat { compact ? 22 : 26 }
-
-    var body: some View {
-        HStack(spacing: compact ? 12 : 16) {
-            Button(intent: PreviousTrackIntent()) {
-                Image(systemName: "backward.fill")
-            }
-            .accessibilityLabel("上一首")
-            Button(intent: PlayPauseIntent()) {
-                Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-            }
-            .accessibilityLabel(isPlaying ? "暫停" : "播放")
-            Button(intent: NextTrackIntent()) {
-                Image(systemName: "forward.fill")
-            }
-            .accessibilityLabel("下一首")
-        }
-        .font(.system(size: size, weight: .semibold))
-        .buttonStyle(.plain)
-        .foregroundStyle(Color.primary)
-    }
-}
 
 /// 目前句（間奏時改成系統自己推進的倒數）
 private struct CurrentLineView: View {
@@ -245,7 +211,8 @@ private struct LockScreenActivityView: View {
             ActivityArtwork(file: state.artworkFile, isPlaying: state.isPlaying, size: 44)
             VStack(alignment: .leading, spacing: 6) {
                 header
-                CurrentLineView(state: state, font: .system(.title2, design: .rounded, weight: .bold), isStale: isStale)
+                CurrentLineView(state: state, font: .system(.title2, design: .rounded, weight: .bold),
+                                isStale: isStale, lineLimit: 3)
                 if isStale {
                     Text(staleMessage)
                         .font(.caption.weight(.medium))
@@ -258,7 +225,6 @@ private struct LockScreenActivityView: View {
                 }
                 ActivityProgress(state: state)
             }
-            ActivityControls(isPlaying: state.isPlaying)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)

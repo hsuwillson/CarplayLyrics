@@ -124,6 +124,9 @@ private struct DrivingSection: View {
             Toggle(isOn: $model.endActivityWhenIdle) {
                 Label("沒在播放時收起即時動態", systemImage: "rectangle.topthird.inset.filled")
             }
+            Toggle(isOn: $model.liveActivityOnlyInCar) {
+                Label("只在車上顯示即時動態", systemImage: "car.circle")
+            }
             if model.isCarConnected {
                 LabeledContent("車用音訊", value: "已連接")
                     .font(.footnote)
@@ -131,7 +134,7 @@ private struct DrivingSection: View {
         } header: {
             Text("開車模式")
         } footer: {
-            Text("即時動態只能在 App 開著時啟動：上車時先打開一次 CarLyrics 再鎖定手機。\n「沒在播放時收起」會在 Spotify 停止 30 秒（暫停 5 分鐘）後結束即時動態，靈動島就不會一直被佔用；恢復播放時若 App 在背景，可能要再打開一次 CarLyrics 才會重新出現。")
+            Text("即時動態只能在 App 開著時啟動：上車時先打開一次 CarLyrics 再鎖定手機。\n即時動態進行中時，系統一定會佔用動態島（無法關閉），所以這裡只放一個小圖示、不放歌詞也不放按鈕。\n「沒在播放時收起」會在 Spotify 停止 30 秒（暫停 5 分鐘）後結束即時動態；「只在車上顯示」則是沒連上車用音訊時完全不開即時動態，平常動態島就是乾淨的（鎖定畫面可以改用歌詞小工具）。")
         }
     }
 }
