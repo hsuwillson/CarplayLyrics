@@ -496,7 +496,8 @@ final class AppModel {
                 guard !Task.isCancelled else { return }
                 self?.carGraceElapsed()
             }
-        case .none:
+        case .none, .disconnected:
+            // routeChanged 不會回傳 .disconnected（只有 graceElapsed 會）
             break
         }
     }
