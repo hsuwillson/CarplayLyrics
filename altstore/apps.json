@@ -16,18 +16,18 @@
       "iconURL": "https://raw.githubusercontent.com/hsuwillson/CarplayLyrics/main/altstore/icon.png",
       "tintColor": "5846D2",
       "version": "0.1.0",
-      "versionDate": "2026-09-23T06:59:34Z",
-      "versionDescription": "CI #34（commit f5e205e58f538d2767cf6b3d65ac88441b06e99f）",
+      "versionDate": "2026-09-23T03:55:48Z",
+      "versionDescription": "CI #25（commit 646cbc03b1c18e0394ca9e3aedb723278bfb8629）",
       "downloadURL": "https://github.com/hsuwillson/CarplayLyrics/releases/download/latest-build/CarLyrics.ipa",
-      "size": 1101455,
+      "size": 1078183,
       "versions": [
         {
           "version": "0.1.0",
-          "buildVersion": "34",
-          "date": "2026-09-23T06:59:34Z",
-          "localizedDescription": "CI #34（commit f5e205e58f538d2767cf6b3d65ac88441b06e99f）",
+          "buildVersion": "25",
+          "date": "2026-09-23T03:55:48Z",
+          "localizedDescription": "CI #25（commit 646cbc03b1c18e0394ca9e3aedb723278bfb8629）",
           "downloadURL": "https://github.com/hsuwillson/CarplayLyrics/releases/download/latest-build/CarLyrics.ipa",
-          "size": 1101455,
+          "size": 1078183,
           "minOSVersion": "26.0"
         }
       ],
