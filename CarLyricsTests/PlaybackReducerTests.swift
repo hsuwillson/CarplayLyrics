@@ -287,8 +287,9 @@ final class PlaybackReducerTests: XCTestCase {
 
     /// 暫停只是等紅燈：5 分鐘內不收起
     func testPausedKeepsActivityForFiveMinutes() {
+        send(play(Fixture.nowPlaying(), at: 0), context(0, endWhenIdle: true))
         let paused = Fixture.nowPlaying(playing: false)
-        send(play(paused, at: 0), context(0, endWhenIdle: true))
+        send(play(paused, at: 0.5), context(0.5, endWhenIdle: true))
         let soon = send(play(paused, at: 120), context(120, endWhenIdle: true))
         XCTAssertFalse(soon.effects.contains(.endActivity))
         let later = send(play(paused, at: 400), context(400, endWhenIdle: true))

@@ -1,5 +1,23 @@
 import Foundation
 
+/// 鎖定畫面與 CarPlay 歌詞（即時動態）什麼時候顯示
+enum LiveActivityMode: String, CaseIterable, Sendable {
+    /// 連上 CarPlay 時才顯示；平常動態島保持乾淨
+    case whileDriving
+    /// 播歌時一律顯示
+    case always
+    /// 不使用即時動態（只用 App 畫面與小工具）
+    case off
+
+    var label: String {
+        switch self {
+        case .whileDriving: return "開車時"
+        case .always: return "一律顯示"
+        case .off: return "關閉"
+        }
+    }
+}
+
 /// 所有使用者設定集中在這裡（key 沿用舊版，升級不會遺失設定）
 final class Preferences {
     enum Key {
@@ -75,16 +93,28 @@ final class Preferences {
         set { defaults.set(newValue, forKey: Key.autoFocusInCar) }
     }
 
-    /// 沒在播放時結束即時動態（不要一直佔用靈動島）
+    /// 沒在播放時結束即時動態（不要一直佔用動態島）
     var endActivityWhenIdle: Bool {
         get { bool(Key.endActivityWhenIdle, default: true) }
         set { defaults.set(newValue, forKey: Key.endActivityWhenIdle) }
     }
 
-    /// 只在連上車用音訊時啟動即時動態（平常不佔用動態島）
+    /// 只在連上 CarPlay 時啟動即時動態（平常不佔用動態島）；預設開
     var liveActivityOnlyInCar: Bool {
-        get { bool(Key.liveActivityOnlyInCar, default: false) }
+        get { bool(Key.liveActivityOnlyInCar, default: true) }
         set { defaults.set(newValue, forKey: Key.liveActivityOnlyInCar) }
+    }
+
+    /// 設定頁的三選一，存成原本的兩個開關（升級不會遺失設定）
+    var liveActivityMode: LiveActivityMode {
+        get {
+            guard liveActivityEnabled else { return .off }
+            return liveActivityOnlyInCar ? .whileDriving : .always
+        }
+        set {
+            liveActivityEnabled = newValue != .off
+            liveActivityOnlyInCar = newValue == .whileDriving
+        }
     }
 
     /// Wi-Fi 時預先載入整個播放佇列的歌詞（進隧道 / 地下停車場也有歌詞）

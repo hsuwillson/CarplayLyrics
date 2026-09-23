@@ -3,7 +3,7 @@ import SwiftUI
 import WidgetKit
 
 /// 歌詞即時動態（只顯示歌詞：播放控制交給鎖定畫面上的 Spotify）
-/// - 鎖定畫面：封面 + 歌名列 + 目前句（大字、最多三行）+ 下一句 + 系統自己推進的進度條
+/// - 鎖定畫面：一行小字歌名 + 目前句（大字、最多三行）+ 下一句
 /// - CarPlay / Apple Watch：`.small` activity family（iOS 26 CarPlay 使用這個尺寸），目前句 + 下一句 + 細進度條
 /// - 動態島：只放一個小圖示。即時動態進行中時系統一定會佔用動態島，無法關閉，
 ///   所以這裡刻意不放歌詞、不放按鈕，把佔用面積壓到最小；沒在播放時會自動收起（見 IdlePolicy）
@@ -95,7 +95,7 @@ private struct ActivityProgress: View {
 }
 
 /// 背景更新被系統暫停時的說明
-private let staleMessage = "鎖定畫面暫停更新 · 打開 App 或看小工具"
+private let staleMessage = "歌詞沒跟上 · 點這裡打開 CarLyrics"
 
 /// 目前句（間奏時改成系統自己推進的倒數）
 private struct CurrentLineView: View {
@@ -179,7 +179,7 @@ private struct SmallActivityView: View {
             CurrentLineView(state: state, font: .system(size: 22, weight: .bold, design: .rounded), isStale: isStale)
             Spacer(minLength: 0)
             if isStale {
-                Label("未更新", systemImage: "exclamationmark.triangle.fill")
+                Label("歌詞未更新", systemImage: "exclamationmark.triangle.fill")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.orange)
                     .lineLimit(1)
@@ -201,47 +201,39 @@ private struct SmallActivityView: View {
     }
 }
 
-/// 鎖定畫面
+/// 鎖定畫面：只放歌詞（封面、進度條、播放按鈕 Spotify 自己的卡片都有了）
 private struct LockScreenActivityView: View {
     let state: LyricsActivityAttributes.ContentState
     let isStale: Bool
 
     var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            ActivityArtwork(file: state.artworkFile, isPlaying: state.isPlaying, size: 44)
-            VStack(alignment: .leading, spacing: 6) {
-                header
-                CurrentLineView(state: state, font: .system(.title2, design: .rounded, weight: .bold),
-                                isStale: isStale, lineLimit: 3)
-                if isStale {
-                    Text(staleMessage)
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.orange)
-                } else if !state.nextLine.isEmpty {
-                    Text(state.nextLine)
-                        .font(.headline)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                ActivityProgress(state: state)
+        VStack(alignment: .leading, spacing: 6) {
+            header
+            CurrentLineView(state: state, font: .system(.title, design: .rounded, weight: .heavy),
+                            isStale: isStale, lineLimit: 3)
+            if isStale {
+                Text(staleMessage)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.orange)
+            } else if !state.nextLine.isEmpty {
+                Text(state.nextLine)
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
     }
 
+    /// 一行小字：哪一首（暫停時顯示暫停符號）
     private var header: some View {
         HStack(spacing: 6) {
             PlayingIcon(isPlaying: state.isPlaying)
             Text(state.trackName)
-                .font(.caption.weight(.semibold))
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
                 .lineLimit(1)
-            if !state.artistName.isEmpty {
-                Text("· \(state.artistName)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
             Spacer(minLength: 0)
             if isStale {
                 Image(systemName: "exclamationmark.triangle.fill")

@@ -59,11 +59,10 @@ enum UserFacingError: Error, Equatable, Sendable {
         case .offline: return "沒有網路連線"
         case .timeout: return "連線逾時"
         case .spotifyUnauthorized: return "Spotify 登入已失效"
-        case .spotifyForbidden: return "Spotify 拒絕這個操作"
+        case .spotifyForbidden: return "Spotify 現在不允許這個操作"
         case .spotifyNoDevice: return "找不到播放中的裝置"
         case .spotifyServer: return "Spotify 暫時無法回應"
-        case .rateLimited: return "請求太頻繁"
-        case .quotaExceeded: return "Spotify API 配額用完"
+        case .rateLimited, .quotaExceeded: return "Spotify 暫時限制查詢"
         case .missingControlScope: return "需要重新授權"
         case .lyricsUnavailable: return "歌詞服務暫時無法使用"
         case .loginFailed: return "登入失敗"
@@ -76,21 +75,23 @@ enum UserFacingError: Error, Equatable, Sendable {
         case .offline: return "恢復連線後會自動繼續同步。"
         case .timeout: return "網路不穩，稍後會自動重試。"
         case .spotifyUnauthorized: return "請重新登入 Spotify。"
-        case .spotifyForbidden: return "播放控制需要 Spotify Premium，或請重新登入。"
+        case .spotifyForbidden: return "例如廣告時不能跳過，或這個操作需要 Spotify Premium。稍後再試。"
         case .spotifyNoDevice: return "請先在 Spotify 開始播放。"
-        case .spotifyServer(let code): return "伺服器回應 \(code)，稍後會自動重試。"
-        case .rateLimited(let s): return "\(s) 秒後自動重試。"
-        case .quotaExceeded: return "已降低查詢頻率，一小時後恢復。"
+        case .spotifyServer: return "Spotify 暫時沒有回應，稍後會自動重試。"
+        case .rateLimited(let s): return "\(s) 秒後自動恢復。"
+        case .quotaExceeded: return "已自動放慢更新，約一小時後恢復；歌詞仍照時間顯示。"
         case .missingControlScope: return "要使用播放按鈕，需要重新登入並允許「控制播放」。"
-        case .lyricsUnavailable: return "無法連線到 LRCLIB，可以稍後重試。"
-        case .loginFailed(let m): return m
-        case .unknown(let m): return m
+        case .lyricsUnavailable: return "歌詞網站暫時連不上，網路恢復後會自動重試。"
+        // 原始訊息（英文 / 代碼）只寫進診斷紀錄，畫面上給看得懂的說明
+        case .loginFailed: return "登入沒有完成，請再試一次；一直失敗的話，到「設定 › 關於 › 診斷」分享紀錄。"
+        case .unknown: return "請稍後再試；一直發生的話，到「設定 › 關於 › 診斷」分享紀錄。"
         }
     }
 
     var action: Action {
         switch self {
-        case .spotifyUnauthorized, .missingControlScope, .spotifyForbidden: return .relogin
+        // 403（例如廣告時不能跳過）重新登入也沒用，不要引導使用者去登出登入
+        case .spotifyUnauthorized, .missingControlScope: return .relogin
         case .lyricsUnavailable, .timeout, .spotifyServer: return .retry
         default: return .none
         }
@@ -107,7 +108,7 @@ enum UserFacingError: Error, Equatable, Sendable {
     /// 暫時性問題（會自動恢復）用灰色；需要使用者處理的用橘色
     var needsAttention: Bool {
         switch self {
-        case .spotifyUnauthorized, .missingControlScope, .spotifyForbidden, .loginFailed, .quotaExceeded: return true
+        case .spotifyUnauthorized, .missingControlScope, .loginFailed: return true
         default: return false
         }
     }

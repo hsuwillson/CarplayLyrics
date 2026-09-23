@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// 設定頁（由主畫面右上角齒輪打開）：
-/// 設定檢查 / 帳號 / 歌詞提前 / 開車模式 / 歌詞 / 關於 / 診斷
+/// 設定檢查 / 開車 / 歌詞提前 / 歌詞 / 帳號 / 關於 / 診斷
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -21,10 +21,10 @@ struct SettingsView: View {
                         }
                     }
                 }
-                AccountSection()
-                OffsetSection()
                 DrivingSection()
+                OffsetSection()
                 LyricsSection()
+                AccountSection()
                 AboutSection()
             }
             .navigationTitle("設定")
@@ -42,12 +42,13 @@ struct SettingsView: View {
 
 private struct AccountSection: View {
     @Environment(AppModel.self) private var model
+    @State private var confirmLogout = false
 
     var body: some View {
         Section {
             HStack(spacing: 10) {
                 StatusDot(color: model.auth.isLoggedIn ? .green : .gray)
-                Text(model.auth.isLoggedIn ? model.session.label : "尚未登入 Spotify")
+                Text(model.auth.isLoggedIn ? "已登入" : "尚未登入 Spotify")
                     .lineLimit(2)
             }
             if model.auth.isLoggedIn {
@@ -59,7 +60,10 @@ private struct AccountSection: View {
                             .foregroundStyle(.orange)
                     }
                 }
-                Button("登出 Spotify", role: .destructive) { model.logout() }
+                Button("登出 Spotify", role: .destructive) { confirmLogout = true }
+                    .confirmationDialog("登出後會停止同步歌詞", isPresented: $confirmLogout, titleVisibility: .visible) {
+                        Button("登出", role: .destructive) { model.logout() }
+                    }
             } else {
                 Button("登入 Spotify") { model.login() }
             }
@@ -109,32 +113,51 @@ private struct DrivingSection: View {
     var body: some View {
         @Bindable var model = model
         Section {
-            Toggle(isOn: $model.backgroundEnabled) {
-                Label("背景持續執行", systemImage: "arrow.clockwise.circle")
+            Picker(selection: $model.liveActivityMode) {
+                ForEach(LiveActivityMode.allCases, id: \.self) { mode in
+                    Text(mode.label).tag(mode)
+                }
+            } label: {
+                Label("鎖定畫面與 CarPlay 歌詞", systemImage: "car")
             }
-            Toggle(isOn: $model.liveActivityEnabled) {
-                Label("即時動態（鎖定畫面 / CarPlay）", systemImage: "car")
+            Toggle(isOn: $model.autoFocusInCar) {
+                Label("連上 CarPlay 時自動進入專注模式", systemImage: "car.side")
             }
             Toggle(isOn: $model.keepScreenOn) {
                 Label("播放時螢幕不自動關閉", systemImage: "sun.max")
             }
-            Toggle(isOn: $model.autoFocusInCar) {
-                Label("連上車用音訊時進入專注模式", systemImage: "car.side")
-            }
-            Toggle(isOn: $model.endActivityWhenIdle) {
-                Label("沒在播放時收起即時動態", systemImage: "rectangle.topthird.inset.filled")
-            }
-            Toggle(isOn: $model.liveActivityOnlyInCar) {
-                Label("只在車上顯示即時動態", systemImage: "car.circle")
-            }
             if model.isCarConnected {
-                LabeledContent("車用音訊", value: "已連接")
+                LabeledContent("CarPlay", value: "已連接")
                     .font(.footnote)
             }
         } header: {
-            Text("開車模式")
+            Text("開車")
         } footer: {
-            Text("即時動態只能在 App 開著時啟動：上車時先打開一次 CarLyrics 再鎖定手機。\n即時動態進行中時，系統一定會佔用動態島（無法關閉），所以這裡只放一個小圖示、不放歌詞也不放按鈕。\n「沒在播放時收起」會在 Spotify 停止 30 秒（暫停 5 分鐘）後結束即時動態；「只在車上顯示」則是沒連上車用音訊時完全不開即時動態，平常動態島就是乾淨的（鎖定畫面可以改用歌詞小工具）。")
+            Text(footer(for: model.liveActivityMode))
+        }
+
+        Section {
+            Toggle(isOn: $model.backgroundEnabled) {
+                Label("鎖定手機後繼續同步", systemImage: "arrow.clockwise.circle")
+            }
+            Toggle(isOn: $model.endActivityWhenIdle) {
+                Label("沒在播放時收起鎖定畫面歌詞", systemImage: "rectangle.topthird.inset.filled")
+            }
+        } header: {
+            Text("進階")
+        } footer: {
+            Text("「鎖定手機後繼續同步」關掉的話，鎖定畫面與 CarPlay 的歌詞會在鎖定後停住。收起：Spotify 停止 30 秒、暫停 5 分鐘後自動結束（在車上一律 5 分鐘）。")
+        }
+    }
+
+    private func footer(for mode: LiveActivityMode) -> String {
+        switch mode {
+        case .whileDriving:
+            return "連上 CarPlay 才顯示，平常動態島保持乾淨，下車自動收起。iOS 只允許 App 打開時開始顯示，所以上車後要打開一次 CarLyrics——到「設定檢查」設定捷徑自動化，上車就會自動打開。"
+        case .always:
+            return "播歌時在鎖定畫面顯示歌詞。iOS 會同時在動態島放一個小圖示（系統規定，無法關閉）；沒在播放一陣子後會自動收起。"
+        case .off:
+            return "不在鎖定畫面與 CarPlay 顯示歌詞。可以改用小工具（CarPlay 小工具頁、鎖定畫面）。"
         }
     }
 }

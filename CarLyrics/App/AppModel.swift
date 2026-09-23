@@ -114,7 +114,24 @@ final class AppModel {
         didSet { preferences.autoFocusInCar = autoFocusInCar }
     }
 
-    /// 只在連上車用音訊時啟動即時動態（平常不佔用動態島）
+    /// 設定頁的「鎖定畫面與 CarPlay 歌詞」三選一（存成 liveActivityEnabled + liveActivityOnlyInCar）
+    var liveActivityMode: LiveActivityMode {
+        get {
+            guard liveActivityEnabled else { return .off }
+            return liveActivityOnlyInCar ? .whileDriving : .always
+        }
+        set {
+            if newValue == .off {
+                liveActivityEnabled = false
+            } else {
+                // 先決定「只在車上」再打開，避免不在車上時先閃出一個即時動態
+                liveActivityOnlyInCar = newValue == .whileDriving
+                liveActivityEnabled = true
+            }
+        }
+    }
+
+    /// 只在連上 CarPlay 時啟動即時動態（平常不佔用動態島）
     var liveActivityOnlyInCar: Bool {
         didSet {
             preferences.liveActivityOnlyInCar = liveActivityOnlyInCar
@@ -126,7 +143,7 @@ final class AppModel {
         }
     }
 
-    /// 沒在播放時結束即時動態（不要一直佔用靈動島）
+    /// 沒在播放時結束即時動態（不要一直佔用動態島）
     var endActivityWhenIdle: Bool {
         didSet {
             preferences.endActivityWhenIdle = endActivityWhenIdle
@@ -147,6 +164,10 @@ final class AppModel {
     // MARK: 內部狀態
 
     @ObservationIgnored private var isForeground = true
+    /// 這次上車已經自動進過專注模式（使用者離開後不要一直把他拉回去）
+    @ObservationIgnored private var autoFocusedThisCarSession = false
+    /// 這首歌的歌詞自動重試了幾次（換歌歸零）
+    @ObservationIgnored private var lyricsAutoRetryCount = 0
     /// 專注模式開著時，螢幕不自動關閉
     @ObservationIgnored var focusModeActive = false {
         didSet { updateIdleTimer() }
@@ -189,7 +210,10 @@ final class AppModel {
             guard let self else { return }
             self.isCarConnected = connected
             // 上車：如果正在播歌，直接進專注模式（車架上看得比較清楚）
-            if connected, self.autoFocusInCar, self.isPlaying, self.requestedScreen == nil {
+            if !connected { self.autoFocusedThisCarSession = false }
+            if connected, self.autoFocusInCar, self.isPlaying, self.requestedScreen == nil,
+               !self.autoFocusedThisCarSession {
+                self.autoFocusedThisCarSession = true
                 self.requestedScreen = .focus
             }
             // 「只在車上顯示即時動態」：上車開、下車收
@@ -213,6 +237,11 @@ final class AppModel {
             if online {
                 if self.pollError == .offline { self.pollError = nil }
                 self.poller.pollNow()
+                // 網路恢復：剛才沒載到的歌詞自動重載（開車時不用去按「重試」）
+                if case .failed = self.lyrics.state {
+                    debugLog("網路恢復，自動重新載入歌詞")
+                    self.lyrics.retry()
+                }
             } else {
                 self.pollError = .offline
             }
@@ -227,31 +256,11 @@ final class AppModel {
                 self?.request(screen: raw.flatMap(CarLyricsScreen.init(rawValue:)) ?? .lyrics)
             }
         }
-        // 即時動態 / 小工具上的播放按鈕：intent 在這個程序執行
-        PlaybackIntentBridge.handler = { [weak self] action in
-            await self?.performFromIntent(action)
-        }
         enablementTask = Task { [weak self] in
             for await enabled in ActivityAuthorizationInfo().activityEnablementUpdates {
                 self?.activitiesEnabled = enabled
             }
         }
-    }
-
-    /// 鎖定畫面 / 小工具的按鈕按下（intent 在 App 程序執行）
-    func performFromIntent(_ action: PlaybackIntentAction) async {
-        debugLog("即時動態按鈕：\(action.rawValue)")
-        let before = liveActivity.acceptedCount
-        switch action {
-        case .playPause: control(isPlaying ? .pause : .play)
-        case .next: control(.next)
-        case .previous: previousOrRestart()
-        }
-        // 使用者互動期間推一次更新：觀察系統是否放行（實驗）
-        pushLiveActivity(priority: .important)
-        try? await Task.sleep(for: .milliseconds(800))
-        debugLog("互動後即時動態套用：\(liveActivity.acceptedCount > before ? "成功" : "沒有變化")")
-        poller.pollNow()
     }
 
     /// 由深連結 / 捷徑 / 控制中心要求開啟某個畫面
@@ -309,6 +318,11 @@ final class AppModel {
 
     func appBecameActive() {
         isForeground = true
+        // 在車上打開（例如捷徑自動化）：直接進專注模式，一次車程只自動進一次
+        if isCarConnected, autoFocusInCar, !autoFocusedThisCarSession, requestedScreen == nil {
+            autoFocusedThisCarSession = true
+            requestedScreen = .focus
+        }
         auth.reloadIfNeeded()
         updateIdleTimer()
         liveActivity.appBecameActive()
@@ -382,6 +396,9 @@ final class AppModel {
                 pushLiveActivity(placeholder: true, priority: .important)
             } catch SpotifyAuthError.cancelled {
                 debugLog("使用者取消登入")
+            } catch SpotifyAuthError.invalidCallback(let reason) where reason == "access_denied" {
+                // 在 Spotify 頁面按了「取消」
+                debugLog("使用者在 Spotify 頁面取消授權")
             } catch {
                 debugLog("登入失敗：\(error.localizedDescription)")
                 pollError = UserFacingError(error)
@@ -401,9 +418,9 @@ final class AppModel {
         debugLog("已登出")
     }
 
-    /// 一鍵重新登入（取得新的權限，例如「控制播放」）
+    /// 一鍵重新登入（取得新的權限，例如「控制播放」）。
+    /// 不先登出：登入成功才換掉舊的 token；取消或沒網路時維持原本的登入，不會把歌詞同步停掉
     func relogin() {
-        logout()
         login()
     }
 
@@ -583,6 +600,7 @@ final class AppModel {
             debugLog(message)
         case .newTrack(let np):
             artworkFile = nil
+            lyricsAutoRetryCount = 0
             // 先套用這首歌的延遲，第一次寫給小工具的時間軸就是正確的
             trackOffset = trackOffsets.offset(for: np.trackID)
             lyrics.load(for: np)
@@ -596,7 +614,7 @@ final class AppModel {
         case .pushCurrent(let important):
             pushLiveActivity(priority: important ? .important : .routine)
         case .endActivity:
-            debugLog("閒置，結束即時動態（靈動島讓出來）")
+            debugLog("閒置，結束即時動態（動態島讓出來）")
             liveActivity.end()
         case .publishIdle(let message):
             widget.publish(.idle(message))
@@ -626,8 +644,24 @@ final class AppModel {
 
     // MARK: - 歌詞
 
+    /// 歌詞載入失敗（網路不穩）時自動重試：5、15、30 秒後各一次；換歌就停
+    private func scheduleLyricsAutoRetryIfNeeded() {
+        guard case .failed = lyrics.state, lyricsAutoRetryCount < 3, let trackID = nowPlaying?.trackID else { return }
+        let delays: [UInt64] = [5, 15, 30]
+        let delay = delays[lyricsAutoRetryCount]
+        lyricsAutoRetryCount += 1
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: delay * 1_000_000_000)
+            guard let self, self.nowPlaying?.trackID == trackID, case .failed = self.lyrics.state,
+                  self.isOnline else { return }
+            debugLog("自動重新載入歌詞（第 \(self.lyricsAutoRetryCount) 次）")
+            self.lyrics.retry()
+        }
+    }
+
     private func lyricsChanged() {
         if lyrics.state == .searching { lyricsDisplay = .empty }
+        scheduleLyricsAutoRetryIfNeeded()
         // 先寫小工具（換歌前後的連續更新會合併），再 tick，避免緊接著又發一次逐句重新整理
         publishWidgetTimeline(debounce: true)
         tick()

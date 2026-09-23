@@ -206,7 +206,8 @@ private struct NowPlayingHero: View {
 
     var body: some View {
         VStack(spacing: Theme.Spacing.m) {
-            if let np = model.nowPlaying {
+            // 廣告 / Podcast 時不顯示上一首歌的資訊（IdleHero 會顯示「廣告播放中」）
+            if let np = model.nowPlaying, !model.session.isNonMusic {
                 HStack(spacing: Theme.Spacing.l) {
                     ArtworkView(url: np.artworkURL, size: 72, cornerRadius: 12)
                     TrackTitle(title: np.title, artist: np.artist, album: np.album)
@@ -329,14 +330,24 @@ private struct IdleHero: View {
 
 private struct LyricsStage: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.openURL) private var openURL
     /// 開啟「換歌詞」（參數：是否直接匯入檔案）
     let openPicker: (Bool) -> Void
 
     var body: some View {
         Group {
-            if model.nowPlaying == nil {
-                EmptyHint(symbol: "car.fill",
-                          text: "開車前先打開一次 CarLyrics 再鎖定手機，\n歌詞會顯示在鎖定畫面與 CarPlay。")
+            if model.session.isNonMusic {
+                EmptyHint(symbol: "megaphone", text: "廣告 / Podcast 沒有歌詞\n結束後會自動接上")
+            } else if model.nowPlaying == nil {
+                VStack(spacing: Theme.Spacing.m) {
+                    EmptyHint(symbol: "music.note", text: "在 Spotify 播歌後，歌詞會自動出現")
+                    Button {
+                        if let url = URL(string: "spotify:") { openURL(url) }
+                    } label: {
+                        Label("打開 Spotify", systemImage: "arrow.up.forward.app")
+                    }
+                    .buttonStyle(.glass)
+                }
             } else {
                 switch model.lyrics.state {
                 case .synced:
@@ -352,7 +363,7 @@ private struct LyricsStage: View {
                     }
                 case .notFound:
                     VStack(spacing: Theme.Spacing.m) {
-                        EmptyHint(symbol: "text.magnifyingglass", text: "LRCLIB 找不到這首歌的歌詞")
+                        EmptyHint(symbol: "text.magnifyingglass", text: "找不到這首歌的歌詞")
                         HStack(spacing: Theme.Spacing.s) {
                             Button("搜尋其他版本") { openPicker(false) }
                             Button("匯入 LRC 檔") { openPicker(true) }
@@ -430,7 +441,7 @@ private struct PlainLyricsStage: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.s) {
-            Label("只有未同步歌詞：無法逐句顯示，延遲調整對它沒有作用", systemImage: "text.alignleft")
+            Label("只有未同步歌詞：無法逐句顯示，也不能調整歌詞提前", systemImage: "text.alignleft")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             ScrollView {

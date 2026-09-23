@@ -273,7 +273,7 @@ struct PlaybackReducer: Sendable {
 
     // MARK: - 閒置
 
-    /// 閒置一段時間 → 結束即時動態（靈動島不要一直被佔用）。
+    /// 閒置一段時間 → 結束即時動態（動態島不要一直被佔用）。
     /// 與 appendIdleStop 不同：前景也會做，而且不停止背景執行，
     /// 下次 Spotify 開始播放時 App 會重新開一個即時動態。
     @discardableResult

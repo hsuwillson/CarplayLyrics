@@ -190,4 +190,26 @@ final class RoundFourMiscTests: XCTestCase {
         p.pendingScreen = nil
         XCTAssertNil(p.pendingScreen)
     }
+
+    func testLiveActivityModeAndIdleDefaults() {
+        let suite = "LAMode.\(UUID().uuidString)"
+        let d = UserDefaults(suiteName: suite)!
+        defer { d.removePersistentDomain(forName: suite) }
+        let p = Preferences(defaults: d)
+        // 預設：開車時才顯示、沒在播放時收起
+        XCTAssertEqual(p.liveActivityMode, .whileDriving)
+        XCTAssertTrue(p.endActivityWhenIdle)
+        p.liveActivityMode = .always
+        XCTAssertTrue(p.liveActivityEnabled)
+        XCTAssertFalse(p.liveActivityOnlyInCar)
+        XCTAssertEqual(p.liveActivityMode, .always)
+        p.liveActivityMode = .off
+        XCTAssertFalse(p.liveActivityEnabled)
+        XCTAssertEqual(p.liveActivityMode, .off)
+        p.liveActivityMode = .whileDriving
+        XCTAssertEqual(p.liveActivityMode, .whileDriving)
+        p.endActivityWhenIdle = false
+        XCTAssertFalse(p.endActivityWhenIdle)
+        XCTAssertEqual(LiveActivityMode.allCases.map(\.label), ["開車時", "一律顯示", "關閉"])
+    }
 }

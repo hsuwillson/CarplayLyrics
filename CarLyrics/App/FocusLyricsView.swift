@@ -159,6 +159,26 @@ private struct FocusLyrics: View {
 
     var body: some View {
         Group {
+            if case .nonMusic(let kind) = model.session {
+                // 廣告 / Podcast：不要把上一首最後一句用大字留在畫面上
+                VStack(spacing: 10) {
+                    Text(kind.label)
+                        .font(.title.weight(.semibold))
+                    Text("結束後會自動接上歌詞")
+                        .font(.title3)
+                        .foregroundStyle(Color.white.opacity(0.6))
+                }
+                .foregroundStyle(Color.white)
+                .multilineTextAlignment(.center)
+            } else {
+                lyricsBody
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var lyricsBody: some View {
+        Group {
             switch model.lyrics.state {
             case .synced:
                 synced

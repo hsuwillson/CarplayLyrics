@@ -150,7 +150,7 @@ struct DiagnosticsView: View {
         Section("歌詞") {
             LabeledContent("狀態", value: model.lyrics.state.label)
             LabeledContent("來源", value: model.lyrics.hasManualLyrics ? "手動指定" : "自動搜尋")
-            LabeledContent("延遲", value: String(format: "全部 %+.2f 秒 · 這首 %+.2f 秒", model.globalOffset, model.trackOffset))
+            LabeledContent("歌詞提前", value: String(format: "全部 %+.2f 秒 · 這首 %+.2f 秒", model.globalOffset, model.trackOffset))
             Button("清除歌詞快取（保留手動指定）") { model.lyrics.clearCache() }
         }
     }

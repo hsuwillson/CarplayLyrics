@@ -105,7 +105,7 @@ struct IdlePolicy: Equatable, Sendable {
     var nonMusicLimit: TimeInterval = 3600
     /// 連著車用音訊（CarPlay / 車用藍牙）時放寬幾倍：人還在車上
     var carMultiplier: Double = 3
-    /// 沒在播放這麼久之後結束即時動態（不要一直佔用靈動島）
+    /// 沒在播放這麼久之後結束即時動態（不要一直佔用動態島）
     var activityEndAfterNothing: TimeInterval = 30
     /// 暫停這麼久之後結束即時動態（暫停常常只是等紅燈，給久一點）
     var activityEndAfterPaused: TimeInterval = 300

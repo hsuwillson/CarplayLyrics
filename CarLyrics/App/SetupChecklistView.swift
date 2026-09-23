@@ -4,6 +4,7 @@ import SwiftUI
 struct SetupChecklistView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
     private let isOnboarding: Bool
 
     init(isOnboarding: Bool = false) {
@@ -22,7 +23,7 @@ struct SetupChecklistView: View {
                             .accessibilityHidden(true)
                         Text("歡迎使用 CarLyrics")
                             .font(.title2.bold())
-                        Text("開車時在鎖定畫面、動態島與 CarPlay 顯示 Spotify 的同步歌詞。完成下面幾項就可以上路。")
+                        Text("開車時在 CarPlay 與鎖定畫面顯示 Spotify 的同步歌詞。完成下面幾項就可以上路。")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
@@ -35,16 +36,19 @@ struct SetupChecklistView: View {
                          ok: model.auth.isLoggedIn) {
                     if !model.auth.isLoggedIn { Button("登入") { model.login() } }
                 }
-                CheckRow(title: "控制播放權限", detail: model.canControlPlayback ? "可以用上一首 / 暫停等按鈕" : "登入時沒有授權「控制播放」",
-                         ok: model.auth.isLoggedIn && model.canControlPlayback) {
-                    if model.auth.isLoggedIn && !model.canControlPlayback { Button("重新登入") { model.relogin() } }
+                if model.auth.isLoggedIn {
+                    CheckRow(title: "控制播放權限",
+                             detail: model.canControlPlayback ? "App 內的播放按鈕可以用" : "登入時沒有授權「控制播放」",
+                             ok: model.canControlPlayback) {
+                        if !model.canControlPlayback { Button("重新登入") { model.relogin() } }
+                    }
                 }
                 CheckRow(title: "系統允許即時動態", detail: model.activitiesEnabled ? "鎖定畫面與 CarPlay 可以顯示歌詞" : "目前被系統設定關閉",
                          ok: model.activitiesEnabled) {
                     if !model.activitiesEnabled { Button("開啟設定") { model.perform(.openSettings) } }
                 }
                 Toggle(isOn: $model.backgroundEnabled) {
-                    CheckLabel(title: "背景持續執行", detail: "鎖定手機後繼續同步", ok: model.backgroundEnabled)
+                    CheckLabel(title: "鎖定手機後繼續同步", detail: "關掉的話鎖定後歌詞會停住", ok: model.backgroundEnabled)
                 }
                 if let days = model.signingDaysRemaining {
                     CheckRow(title: "App 簽名", detail: days < 0 ? "已過期，請用 AltStore 重新整理" : "還有 \(days) 天到期",
@@ -55,16 +59,38 @@ struct SetupChecklistView: View {
             }
 
             Section {
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("上車自動打開 CarLyrics", systemImage: "wand.and.stars")
+                        .font(.headline)
+                    Text("iOS 只允許 App 打開時開始顯示鎖定畫面與 CarPlay 歌詞。設一次捷徑自動化，之後每次上車都會自動打開，不用手動。")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(Array(Self.automationSteps.enumerated()), id: \.offset) { i, step in
+                            Text("\(i + 1). \(step)")
+                                .font(.subheadline)
+                        }
+                    }
+                    Button {
+                        if let url = URL(string: "shortcuts://") { openURL(url) }
+                    } label: {
+                        Label("打開捷徑 App", systemImage: "arrow.up.forward.app")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+                .padding(.vertical, 6)
+            } header: {
+                Text("每次上車")
+            }
+
+            Section {
                 GuideRow(symbol: "car.fill", title: "把小工具加到 CarPlay",
                          steps: ["iPhone「設定」→「一般」→「CarPlay」", "選你的車 →「小工具」", "打開「顯示小工具」，加入 CarLyrics"])
                 GuideRow(symbol: "rectangle.stack", title: "在 CarPlay 打開即時動態",
                          steps: ["同一頁（CarPlay → 你的車）", "打開「即時動態」"])
-                GuideRow(symbol: "wand.and.stars", title: "上車自動打開 CarLyrics（建議）",
-                         steps: ["打開「捷徑」App →「自動化」→「+」", "選「CarPlay」→「連接時」→「立即執行」", "動作選「開啟 CarLyrics」"])
             } header: {
-                Text("開車前")
-            } footer: {
-                Text("即時動態只能在 App 開著時啟動，所以上車時打開一次 CarLyrics 最可靠。")
+                Text("CarPlay 設定（做一次就好）")
             }
         }
         .navigationTitle(isOnboarding ? "開始使用" : "設定檢查")
@@ -80,6 +106,14 @@ struct SetupChecklistView: View {
             }
         }
     }
+}
+
+extension SetupChecklistView {
+    static let automationSteps = [
+        "捷徑 App →「自動化」→ 右上角「+」",
+        "選「CarPlay」→ 勾「連接」→ 選「立即執行」",
+        "動作搜尋「CarLyrics」→ 選「專注模式」",
+    ]
 }
 
 private struct CheckLabel: View {
