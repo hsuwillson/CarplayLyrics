@@ -322,8 +322,8 @@ final class LiveActivityUpdatePolicyTests: XCTestCase {
     }
 
     func testBlockedThreshold() {
-        XCTAssertFalse(policy.shouldEnterBlocked(backgroundRejectStreak: 4))
-        XCTAssertTrue(policy.shouldEnterBlocked(backgroundRejectStreak: 5))
+        XCTAssertFalse(policy.shouldEnterBlocked(backgroundRejectStreak: 7))
+        XCTAssertTrue(policy.shouldEnterBlocked(backgroundRejectStreak: 8))
     }
 }
 

@@ -19,6 +19,7 @@ final class LiveActivityManager {
     private var lastState: State?
     private var chain: Task<Void, Never>?
     private var stateObserver: Task<Void, Never>?
+    private var verifyTask: Task<Void, Never>?
     private var startBlockedUntilForeground = false
 
     private(set) var updateCount = 0
@@ -134,6 +135,8 @@ final class LiveActivityManager {
     func end() {
         stateObserver?.cancel()
         stateObserver = nil
+        verifyTask?.cancel()
+        verifyTask = nil
         guard let activity else { return }
         self.activity = nil
         lastState = nil
@@ -157,14 +160,36 @@ final class LiveActivityManager {
         chain = Task { [weak self] in
             await previous?.value
             await activity.update(content)
-            self?.verify(state, on: activity)
+            // 驗證不放進鏈裡：它要等一下才準，放進來會拖慢下一次更新
+            self?.scheduleVerify(state, on: activity)
         }
     }
 
-    /// 比對系統裡的內容，確認更新有沒有真的被套用（只記錄次數，不記錄歌詞）
-    private func verify(_ state: State, on activity: Activity<LyricsActivityAttributes>) {
+    /// ActivityKit 是非同步套用的：`activity.content` 不會在 `update()` 回來的當下就變新，
+    /// 立刻比對會把正常的更新誤判成「被系統擋住」，進而關掉逐句更新（歌詞就不動了）。
+    /// 所以延遲一下再比，不一致時再給一次機會；期間若已送出更新的內容，這次就不算。
+    private func scheduleVerify(_ state: State, on activity: Activity<LyricsActivityAttributes>) {
+        verifyTask?.cancel()
+        verifyTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            guard !Task.isCancelled, let self, self.lastState == state else { return }
+            if self.applied(state, on: activity) {
+                self.record(mismatch: nil)
+                return
+            }
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            guard !Task.isCancelled, self.lastState == state else { return }
+            self.record(mismatch: activity.content.state.model.mismatchField(comparedTo: state.model))
+        }
+    }
+
+    private func applied(_ state: State, on activity: Activity<LyricsActivityAttributes>) -> Bool {
+        activity.content.state.model.mismatchField(comparedTo: state.model) == nil
+    }
+
+    /// 比對結果 → 統計與「背景是否被擋」的判斷（只記錄次數，不記錄歌詞）
+    private func record(mismatch: String?) {
         let background = isInBackground
-        let mismatch = activity.content.state.model.mismatchField(comparedTo: state.model)
         if mismatch == nil {
             acceptedCount += 1
             backgroundRejectStreak = 0

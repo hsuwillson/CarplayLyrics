@@ -40,8 +40,10 @@ struct LiveActivityUpdatePolicy: Equatable, Sendable {
         }
     }
 
-    /// 連續幾次背景更新沒被套用就判定「被系統擋住」
-    var backgroundRejectLimit = 5
+    /// 連續幾次背景更新沒被套用就判定「被系統擋住」。
+    /// 比對本身有時間差（見 LiveActivityManager.scheduleVerify），寧可慢一點判定，
+    /// 也不要誤判把逐句更新關掉。
+    var backgroundRejectLimit = 8
 
     func decide(_ input: Input) -> Decision {
         guard input.isActive else {
