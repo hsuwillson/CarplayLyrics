@@ -82,6 +82,38 @@ final class PlaybackReducerTests: XCTestCase {
         XCTAssertEqual(out.delay, 1.4, accuracy: 0.001)
     }
 
+    func testResumeAfterPause() {
+        send(play(Fixture.nowPlaying(progress: 10), at: 0), context())
+        send(play(Fixture.nowPlaying(playing: false, progress: 12.4), at: 2.5), context(2.5))
+        let resume = send(play(Fixture.nowPlaying(progress: 12.4), at: 5), context(5))
+        XCTAssertEqual(resume.effects.first, .log("繼續播放"))
+        XCTAssertEqual(state.session, .playing)
+        XCTAssertNil(state.idleKind)
+    }
+
+    func testPausedTooLongStopsBackground() {
+        send(play(Fixture.nowPlaying(progress: 10), at: 0), context())
+        send(play(Fixture.nowPlaying(playing: false, progress: 10), at: 1), context(1))
+        let out = send(play(Fixture.nowPlaying(playing: false, progress: 10), at: 1802), context(1802))
+        XCTAssertEqual(out.effects.suffix(3), [.endActivity, .publishIdle("打開 CarLyrics 繼續同步歌詞"),
+                                               .stopForIdle(minutes: 30)])
+        XCTAssertEqual(out.delay, 30)
+    }
+
+    func testUnknownDurationStillPolls() {
+        let out = send(play(Fixture.nowPlaying(duration: 0), at: 0), context())
+        XCTAssertEqual(out.delay, 2.5)
+    }
+
+    func testAdBackToStaleProgressAlsoPushes() {
+        send(play(Fixture.nowPlaying(progress: 10), at: 0), context())
+        send(.nonMusic(.ad, isPlaying: true), context(2))
+        // 廣告後 Spotify 先回傳過期進度
+        let out = send(play(Fixture.nowPlaying(progress: 10), at: 4), context(4))
+        XCTAssertEqual(out.effects.last, .pushCurrent(important: true))
+        XCTAssertTrue(state.preferFullPlayerEndpoint)
+    }
+
     // MARK: 廣告 / Podcast
 
     func testAdOnlyPublishesOnce() {
