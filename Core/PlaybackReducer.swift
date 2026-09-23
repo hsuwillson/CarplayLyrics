@@ -27,6 +27,10 @@ struct PlaybackState: Equatable, Sendable {
     var hasPlayed = false
     /// 這個時間之前維持最快的輪詢（剛換歌 / 拖動 / 暫停 / 使用者操作）
     var hotUntil = Date.distantPast
+    /// 「沒在播放」清空畫面時記住的上一首與時刻：Spotify 暫停一陣子後會回 204（尤其在車上），
+    /// 同一首在 `resumeSameTrackWithin` 內回來時不當成換歌（歌詞不重載、不重新搜尋）
+    var parkedTrack: NowPlaying?
+    var parkedAt: Date?
 
     func isHot(now: Date) -> Bool { now < hotUntil }
 
@@ -52,6 +56,18 @@ struct PlaybackState: Equatable, Sendable {
         idleSince = nil
         activityEndedForIdle = false
     }
+
+    /// 閒置計時從現在重新起算（種類不變），並允許再收一次即時動態。
+    /// 上車、即時動態開始、回到前景、閒置停止後重新輪詢時呼叫：這些時刻使用者顯然「回來了」，
+    /// 不能把幾十分鐘前開始累積的閒置算在新開的即時動態頭上（build 45 實測：上車 1 秒後就被收掉）。
+    /// - Returns: 原本已累積的閒置秒數；沒有在閒置時 nil
+    @discardableResult
+    mutating func restartIdleClock(at now: Date) -> TimeInterval? {
+        activityEndedForIdle = false
+        guard idleKind != nil, let since = idleSince else { return nil }
+        idleSince = now
+        return now.timeIntervalSince(since)
+    }
 }
 
 /// AppModel 要執行的動作（畫面、即時動態、小工具、背景執行）
@@ -59,6 +75,9 @@ enum PlaybackEffect: Equatable, Sendable {
     case log(String)
     /// 換歌：套用這首歌的延遲、載入歌詞與封面
     case newTrack(NowPlaying)
+    /// 「沒在播放」之後同一首回來了：套用延遲與封面，歌詞還在就沿用（不重載）
+    case resumeTrack(NowPlaying)
+    /// 沒在播放：清空畫面（歌詞先留著，同一首回來時沿用）
     case clearPlayback
     case pushStopped
     case pushNonMusic(NonMusicKind)
@@ -77,6 +96,8 @@ enum PlaybackEffect: Equatable, Sendable {
 struct PlaybackReducer: Sendable {
     var idlePolicy = IdlePolicy()
     var pollPolicy = PollPolicy()
+    /// 「沒在播放」之後多久內同一首回來算「繼續播放」而不是換歌（與暫停的閒置門檻相同）
+    var resumeSameTrackWithin: TimeInterval = 1800
 
     struct Output: Equatable, Sendable {
         var effects: [PlaybackEffect] = []
@@ -175,8 +196,23 @@ struct PlaybackReducer: Sendable {
         state.nowPlaying = np
         if np.isPlaying { state.hasPlayed = true }
         if change != .none && change != .stale { state.markHot(at: context.now) }
+        // 「沒在播放」（連續 204）之後同一首回來：Spotify 暫停久一點就會回 204，這不是換歌
+        let parkedFor: TimeInterval? = {
+            guard change == .newTrack, state.parkedTrack?.trackID == np.trackID, let at = state.parkedAt else { return nil }
+            let gap = context.now.timeIntervalSince(at)
+            return gap <= resumeSameTrackWithin ? gap : nil
+        }()
+        state.parkedTrack = nil
+        state.parkedAt = nil
 
         switch change {
+        case .newTrack where parkedFor != nil:
+            let seconds = Int(parkedFor ?? 0)
+            output.effects.append(.log("同一首回來了（\(np.isPlaying ? "播放中" : "暫停中")；Spotify 回報沒在播放 \(seconds) 秒），沿用歌詞"))
+            output.effects.append(.resumeTrack(np))
+            output.effects.append(.pushCurrent(important: true))
+            output.effects.append(.rescheduleTick)
+            output.effects.append(.publishTimeline(debounce: false))
         case .newTrack:
             output.effects.append(.log("換歌：\(np.title) – \(np.artist)"))
             output.effects.append(.newTrack(np))
@@ -257,9 +293,12 @@ struct PlaybackReducer: Sendable {
             output.delay = pollPolicy.delay(for: .nothing(streak: state.emptyResponseStreak))
             return output
         }
-        if state.nowPlaying != nil {
+        if let np = state.nowPlaying {
             output.effects.append(.log("Spotify 沒有在播放"))
             output.effects.append(.clearPlayback)
+            // 記住這首：暫停久了 Spotify 會回 204，同一首回來時不當成換歌
+            state.parkedTrack = np
+            state.parkedAt = context.now
             state.nowPlaying = nil
             state.engine.reset()
         }
@@ -272,8 +311,9 @@ struct PlaybackReducer: Sendable {
         state.markIdle(.nothing, at: context.now)
         if appendIdleStop(&output, &state, context: context) { return output }
         appendActivityEndForIdle(&output, &state, context: context)
+        // 車上：暫停後 Spotify 回 204 很常見，而且多半很快就續播 → 問得勤一點（手機多半在充電）
         output.delay = pollPolicy.delay(for: .nothing(streak: state.emptyResponseStreak),
-                                        idleFor: state.idleDuration(now: context.now))
+                                        idleFor: state.idleDuration(now: context.now), inCar: context.carConnected)
         return output
     }
 

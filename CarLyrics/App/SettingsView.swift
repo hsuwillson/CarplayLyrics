@@ -66,6 +66,20 @@ private struct DrivingSection: View {
                     SettingsLabel("開車時把螢幕調暗", symbol: "sun.min.fill", color: .blue)
                 }
             }
+            Toggle(isOn: $model.carConnectNoticeEnabled) {
+                SettingsLabel("上車時提醒開歌詞（通知）", symbol: "bell.badge.fill", color: .blue)
+            }
+            if model.carConnectNoticeEnabled {
+                LabeledContent("狀態", value: model.carConnectNoticeStatus)
+                    .font(.footnote)
+                if model.carNotifier.authorization == .denied {
+                    Button {
+                        model.perform(.openSettings)
+                    } label: {
+                        SettingsLabel("到系統設定允許通知", symbol: "gear", color: .gray)
+                    }
+                }
+            }
             // 一律顯示：「開車時」模式在家看得出為什麼沒有鎖定畫面歌詞；車子沒被認出來時也看得出來
             LabeledContent {
                 Text(model.isCarConnected ? "已連接" : "未連接")
@@ -121,12 +135,15 @@ private struct DrivingSection: View {
         switch mode {
         case .whileDriving:
             return """
-                連上 CarPlay 才顯示，下車自動收起。iOS 只讓 App 在打開時開始顯示，所以上車後要打開一次 CarLyrics（可用捷徑自動化，\
-                見「設定檢查」）。手機鎖定後 iOS 會擋掉更新，CarPlay 歌詞會停住——開車時讓 CarLyrics 留在螢幕上（專注模式幾乎全黑）\
-                ，或試試下面的實驗。
+                連上 CarPlay 才顯示，下車 30 秒後收起（CarPlay 常常閃斷）。iOS 只讓 App 在打開時開始顯示，所以上車後要打開一次 \
+                CarLyrics（可用捷徑自動化，見「設定檢查」；沒打開時「上車提醒」會通知你點一下，通知只出現在 iPhone 上）。\
+                手機鎖定後 iOS 會擋掉更新，CarPlay 歌詞會停住——開車時讓 CarLyrics 留在螢幕上（專注模式幾乎全黑），或試試下面的實驗。
                 """
         case .always:
-            return "播歌時就在鎖定畫面顯示歌詞；動態島會多一個小圖示（系統規定）。沒在播放一陣子會自動收起。手機鎖定後 iOS 會擋掉更新，開車時請讓 CarLyrics 留在螢幕上。"
+            return """
+                播歌時就在鎖定畫面顯示歌詞；動態島會多一個小圖示（系統規定）。沒在播放一陣子會自動收起。\
+                手機鎖定後 iOS 會擋掉更新，開車時請讓 CarLyrics 留在螢幕上。「上車提醒」的通知只出現在 iPhone 上。
+                """
         case .off:
             return "不在鎖定畫面與 CarPlay 顯示歌詞；仍可使用小工具（CarPlay 小工具頁、鎖定畫面）。"
         }

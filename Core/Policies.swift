@@ -55,8 +55,10 @@ struct PollPolicy: Equatable, Sendable {
     ///   - surface: 使用者看得到什麼；預設前景（最即時）
     ///   - hot: 剛發生換歌 / 拖動 / 暫停 / 操作後的一小段時間，維持最快的頻率
     ///   - idleFor: 暫停 / 沒在播放已經多久
+    ///   - inCar: 連著車用音訊：「沒在播放」多半是暫停後 Spotify 回 204，很快會續播，前 10 分鐘問勤一點
     func delay(for outcome: PollOutcome, quotaActive: Bool = false, preferFullPlayer: Bool = false,
-               surface: Surface = .foreground, hot: Bool = false, idleFor: TimeInterval = 0) -> TimeInterval {
+               surface: Surface = .foreground, hot: Bool = false, idleFor: TimeInterval = 0,
+               inCar: Bool = false) -> TimeInterval {
         switch outcome {
         case .idleStopped:
             return 30
@@ -78,7 +80,8 @@ struct PollPolicy: Equatable, Sendable {
         case .nothing(let streak):
             // 偶發的 204（切歌、切換裝置）先快速重試；沒在播放久了就放慢
             if streak < 2 { return 3 }
-            return idleFor < 120 ? 10 : 30
+            if idleFor < 120 { return inCar ? 5 : 10 }
+            return inCar && idleFor < 600 ? 10 : 30
         case .rateLimited(let retryAfter, let quotaExceeded):
             return quotaExceeded ? max(retryAfter, 30) : max(retryAfter, 1)
         case .error(let streak):

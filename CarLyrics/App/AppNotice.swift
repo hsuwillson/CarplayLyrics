@@ -3,13 +3,14 @@ import SwiftUI
 /// 主畫面橫幅要顯示的一則提示
 struct AppNotice: Equatable, Identifiable {
     enum Action: Equatable {
-        case relogin, retry, openSettings
+        case relogin, retry, openSettings, allowNotifications
 
         var title: String {
             switch self {
             case .relogin: return "重新登入"
             case .retry: return "重試"
             case .openSettings: return "開啟設定"
+            case .allowNotifications: return "允許通知"
             }
         }
     }
@@ -55,6 +56,12 @@ struct AppNotice: Equatable, Identifiable {
         symbol: "rectangle.badge.xmark", title: "系統已關閉即時動態",
         message: "鎖定畫面與 CarPlay 不會顯示歌詞。請到「設定」打開 CarLyrics 的即時動態。",
         action: .openSettings, needsAttention: true)
+
+    /// 上車提醒需要通知權限（只在不在車上時顯示；問過一次之後不再出現）
+    static let carNoticePermission = AppNotice(
+        symbol: "bell.badge", title: "上車時提醒你開歌詞",
+        message: "CarPlay 連上時若 CarLyrics 在背景，iOS 不讓歌詞自己出現；允許通知，點一下就能開始（只出現在 iPhone 上）。",
+        action: .allowNotifications, needsAttention: false)
 
     static func signingExpiring(days: Int) -> AppNotice {
         AppNotice(symbol: "clock.badge.exclamationmark",

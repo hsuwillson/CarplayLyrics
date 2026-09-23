@@ -41,6 +41,17 @@ struct LiveActivityStalePolicy: Equatable, Sendable {
         var next: String
         /// 目前句之後的視窗（各自帶起訖時刻，畫面放系統自己推進的進度條）；沒有視窗的內容是空的
         var upcoming: [ActivityUpcomingLine] = []
+        /// 由視窗升上來的目前句的起訖區間（畫面在它底下放系統推進的進度條）；不是從視窗來的就 nil
+        var currentInterval: ClosedRange<Date>?
+
+        init(kind: Kind, current: String, next: String, upcoming: [ActivityUpcomingLine] = [],
+             currentInterval: ClosedRange<Date>? = nil) {
+            self.kind = kind
+            self.current = current
+            self.next = next
+            self.upcoming = upcoming
+            self.currentInterval = currentInterval
+        }
     }
 
     static let openAppLine = "打開 CarLyrics 繼續同步歌詞"
@@ -101,7 +112,7 @@ struct LiveActivityStalePolicy: Equatable, Sendable {
         let end = line.endAt ?? line.startAt.addingTimeInterval(advanceWindow)
         if now < end {
             return Display(kind: .advanced, current: line.text.isEmpty ? "♪" : line.text,
-                           next: rest.first?.text ?? "", upcoming: rest)
+                           next: rest.first?.text ?? "", upcoming: rest, currentInterval: line.progressInterval)
         }
         if let following = rest.first {
             // 這句唱完、下一句還沒開始：間奏

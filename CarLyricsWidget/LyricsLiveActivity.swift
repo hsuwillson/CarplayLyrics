@@ -4,11 +4,14 @@ import WidgetKit
 
 /// 歌詞即時動態（只顯示歌詞：播放控制交給鎖定畫面上的 Spotify）
 /// - 每次更新都帶接下來幾句的視窗（`upcoming`，各自有起訖時刻）：每句底下一條系統自己推進的細進度條，
-///   App 的更新被擋時（鎖定後 iOS 擋掉背景更新）沒有任何更新也看得出唱到哪一句
+///   App 的更新被擋時（鎖定後 iOS 擋掉背景更新）、或 CarPlay 兩次重畫之間（實測約一分鐘），
+///   沒有任何更新也看得出唱到哪一句
 /// - stale（超過 staleDate 沒更新）：依 `LiveActivityStalePolicy` 用視窗算出那一刻正在唱的句子並升成目前句
 ///   （只會重畫這一次），播完後改顯示「打開 CarLyrics」，不把舊歌詞當成正在唱的
 /// - 鎖定畫面：一行小字歌名 + 目前句（大字、最多三行）+ 細的逐句進度條 + 接下來最多三句（各帶進度條）
-/// - CarPlay / Apple Watch：`.small` activity family（iOS 26 CarPlay 使用這個尺寸），目前句 + 接下來最多兩句 + 細進度條
+/// - CarPlay / Apple Watch：`.small` activity family（iOS 26 CarPlay 使用這個尺寸）：卡拉 OK 視窗——
+///   目前句 + 接下來最多五句，每句一條進度條（空的＝還沒到、在走＝正在唱、滿的＝唱過了）
+/// - 每次 body 被評估都記一筆重畫時刻到 App Group（`LiveActivityRenderStore`，5 秒內合併），診斷頁看得到節奏
 /// - 動態島：只放一個小圖示。即時動態進行中時系統一定會佔用動態島，無法關閉，
 ///   所以這裡刻意不放歌詞、不放按鈕，把佔用面積壓到最小；沒在播放時會自動收起（見 IdlePolicy）
 struct LyricsLiveActivity: Widget {
@@ -81,25 +84,14 @@ private struct ActivityArtwork: View {
     }
 }
 
-/// 系統自己推進的進度條（不需要 App 更新）
-private struct ActivityProgress: View {
-    let state: LyricsActivityAttributes.ContentState
-
-    var body: some View {
-        if let interval = state.playbackInterval {
-            TimerBar(interval: interval, tint: WidgetTheme.Color.playing)
-        }
-    }
-}
-
-/// 目前句的進度（鎖定畫面用）：從這句開始到下一句開始，系統自己推進。
+/// 目前句的進度：從這句開始到下一句開始，系統自己推進。
 /// 一眼就能分辨「還在動」與「停在滿格＝沒跟上」；沒有下一句（最後一句、間奏）時不顯示
 private struct LineProgress: View {
-    let state: LyricsActivityAttributes.ContentState
+    let interval: ClosedRange<Date>?
 
     var body: some View {
-        if let interval = state.lineProgressInterval {
-            TimerBar(interval: interval, tint: .secondary)
+        if let interval {
+            TimerBar(interval: interval, tint: WidgetTheme.Color.lineBar)
         }
     }
 }
@@ -133,6 +125,8 @@ private struct ShownRow {
 private struct ShownLyrics {
     let current: String
     let next: String
+    /// 目前句的起訖區間（系統推進的進度條）；暫停、間奏、不知道時 nil
+    let currentInterval: ClosedRange<Date>?
     /// 目前句之後的句子（視窗有的話帶進度條區間）
     let rows: [ShownRow]
     let isStale: Bool
@@ -145,6 +139,7 @@ private struct ShownLyrics {
             current = d.current
             next = d.next
             staleKind = d.kind
+            currentInterval = d.currentInterval
             switch d.kind {
             case .songOver, .expired:
                 rows = []
@@ -155,6 +150,7 @@ private struct ShownLyrics {
             current = state.currentLine
             next = state.nextLine
             staleKind = nil
+            currentInterval = state.lineProgressInterval
             let window = state.upcoming ?? []
             rows = window.isEmpty ? Self.textRows(next: state.nextLine, next2: state.nextLine2) : window.map(Self.row)
         }
@@ -261,11 +257,16 @@ private struct LyricsActivityView: View {
     let isStale: Bool
 
     var body: some View {
-        switch activityFamily {
-        case .small:
-            SmallActivityView(state: state, isStale: isStale)
-        default:
-            LockScreenActivityView(state: state, isStale: isStale)
+        // 診斷：畫面真的被系統重畫的節奏（CarPlay 約每分鐘一次）。5 秒內的重複評估不記、不寫檔；
+        // 寫的東西畫面不讀，不會造成重畫迴圈
+        LiveActivityRenderStore.recordRender(family: activityFamily == .small ? .small : .lockScreen)
+        return Group {
+            switch activityFamily {
+            case .small:
+                SmallActivityView(state: state, isStale: isStale)
+            default:
+                LockScreenActivityView(state: state, isStale: isStale)
+            }
         }
     }
 }
@@ -284,8 +285,9 @@ private struct UpcomingRow: View {
                 .font(font)
                 .foregroundStyle(color)
                 .lineLimit(1)
+                .minimumScaleFactor(0.85)
             if let interval = row.interval {
-                TimerBar(interval: interval, tint: .secondary)
+                TimerBar(interval: interval, tint: WidgetTheme.Color.lineBar)
                     .frame(height: barHeight)
                     .accessibilityHidden(true)
             }
@@ -295,7 +297,11 @@ private struct UpcomingRow: View {
     }
 }
 
-/// CarPlay 儀表板 / Apple Watch：字要大，目前句 + 接下來最多兩句（放不下就少列，不要被截掉）
+/// CarPlay 儀表板 / Apple Watch：卡拉 OK 視窗。
+/// CarPlay 大約每分鐘才重畫一次即時動態（build 45 實測；App 在前景、每句更新都被套用也一樣），
+/// 重畫之間畫面完全不變，所以「哪一句正在唱」不能靠粗體：每一列（目前句也一樣）底下都有一條系統自己推進的
+/// 進度條——空的＝還沒到、在走＝正在唱、滿的＝唱過了。重畫當下的目前句大一點只是方便看，一分鐘後它的進度條
+/// 早就滿格了也沒關係，看哪一條在動就對了。放得下幾列就列幾列（`ViewThatFits`，最多五句），不要被截掉
 private struct SmallActivityView: View {
     let state: LyricsActivityAttributes.ContentState
     let isStale: Bool
@@ -303,6 +309,9 @@ private struct SmallActivityView: View {
     var body: some View {
         let shown = ShownLyrics(state: state, isStale: isStale)
         ViewThatFits(in: .vertical) {
+            layout(shown, rows: 5)
+            layout(shown, rows: 4)
+            layout(shown, rows: 3)
             layout(shown, rows: 2)
             layout(shown, rows: 1)
             layout(shown, rows: 0)
@@ -312,27 +321,29 @@ private struct SmallActivityView: View {
     }
 
     private func layout(_ shown: ShownLyrics, rows: Int) -> some View {
-        VStack(alignment: .leading, spacing: WidgetTheme.Spacing.tight) {
-            ActivityProgress(state: state)
-                .frame(height: WidgetTheme.Bar.song)
-                .accessibilityHidden(true)
-            CurrentLineView(state: state, shown: shown, font: WidgetTheme.Font.carCurrent)
+        VStack(alignment: .leading, spacing: WidgetTheme.Spacing.carRow) {
+            // 目前句（重畫當下）：大一點 + 自己的進度條
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    if !state.isPlaying {
+                        Image(systemName: "pause.fill")
+                            .font(.system(size: 13))
+                            .foregroundStyle(.secondary)
+                            .accessibilityLabel("已暫停")
+                    }
+                    CurrentLineView(state: state, shown: shown, font: WidgetTheme.Font.carCurrent)
+                }
+                LineProgress(interval: shown.currentInterval)
+                    .frame(height: WidgetTheme.Bar.carCurrent)
+                    .accessibilityHidden(true)
+            }
             if let hint = shown.staleHint {
                 // 一行提示，讓駕駛一眼看出這不是即時的
                 StaleHintRow(hint: hint, font: WidgetTheme.Font.carHint)
             }
-            ForEach(Array(shown.rows.prefix(rows).enumerated()), id: \.offset) { i, row in
-                HStack(alignment: .top, spacing: 5) {
-                    if i == 0, !state.isPlaying {
-                        Image(systemName: "pause.fill")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                            .accessibilityLabel("已暫停")
-                    }
-                    UpcomingRow(row: row,
-                                font: i == 0 ? WidgetTheme.Font.carUpcoming : WidgetTheme.Font.carUpcomingFaded,
-                                color: i == 0 ? WidgetTheme.Color.upcoming : WidgetTheme.Color.upcomingFaded)
-                }
+            // 接下來的句子：每列同樣的字級與顏色（一分鐘後第幾列才是「目前句」不一定），進度條才是真相
+            ForEach(Array(shown.rows.prefix(rows).enumerated()), id: \.offset) { _, row in
+                UpcomingRow(row: row, font: WidgetTheme.Font.carRow, color: WidgetTheme.Color.upcoming)
             }
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -363,12 +374,10 @@ private struct LockScreenActivityView: View {
         VStack(alignment: .leading, spacing: WidgetTheme.Spacing.row) {
             header
             CurrentLineView(state: state, shown: shown, font: WidgetTheme.Font.lockCurrent, lineLimit: 3)
-            if !isStale {
-                // 細的逐句進度條：更新沒跟上時它會停在滿格，比文字更容易一眼看出
-                LineProgress(state: state)
-                    .frame(height: WidgetTheme.Bar.line)
-                    .accessibilityHidden(true)
-            }
+            // 細的逐句進度條：更新沒跟上時它會停在滿格，比文字更容易一眼看出（stale 時是視窗升上來那句的）
+            LineProgress(interval: shown.currentInterval)
+                .frame(height: WidgetTheme.Bar.line)
+                .accessibilityHidden(true)
             // 接下來最多三句，各帶一條系統推進的細進度條：鎖定後更新被擋，也看得出唱到哪一句
             ForEach(Array(shown.rows.prefix(rows).enumerated()), id: \.offset) { i, row in
                 UpcomingRow(row: row,

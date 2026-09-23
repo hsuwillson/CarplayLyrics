@@ -10,6 +10,8 @@ enum WidgetTheme {
         /// 接下來的句子：第一句 / 之後
         static let upcoming = SwiftUI.Color.secondary
         static let upcomingFaded = SwiftUI.Color.secondary.opacity(0.6)
+        /// 每句底下系統自己推進的細進度條：在走的那一條＝正在唱＝播放中的綠
+        static let lineBar = playing
     }
 
     enum Font {
@@ -17,10 +19,10 @@ enum WidgetTheme {
         static let lockCurrent = SwiftUI.Font.system(.title, design: .rounded, weight: .heavy)
         static let lockUpcoming = SwiftUI.Font.headline
         static let lockUpcomingFaded = SwiftUI.Font.subheadline
-        /// CarPlay 儀表板（activityFamily .small）：固定字級，車機不吃 Dynamic Type
-        static let carCurrent = SwiftUI.Font.system(size: 22, weight: .bold, design: .rounded)
-        static let carUpcoming = SwiftUI.Font.system(size: 15, weight: .medium)
-        static let carUpcomingFaded = SwiftUI.Font.system(size: 14)
+        /// CarPlay 儀表板（activityFamily .small）：固定字級，車機不吃 Dynamic Type。
+        /// 目前句 20 pt、接下來每句 15 pt 同樣大小（CarPlay 約一分鐘才重畫，列與列之間靠進度條分辨）
+        static let carCurrent = SwiftUI.Font.system(size: 20, weight: .bold, design: .rounded)
+        static let carRow = SwiftUI.Font.system(size: 15, weight: .medium)
         static let carHint = SwiftUI.Font.system(size: 12, weight: .medium)
         /// 動態島展開區 / 小工具
         static let islandCurrent = SwiftUI.Font.system(.title3, design: .rounded, weight: .bold)
@@ -32,12 +34,15 @@ enum WidgetTheme {
         static let row: CGFloat = 6
         static let lockPadding: CGFloat = 16
         static let carPadding: CGFloat = 10
+        /// CarPlay 卡拉 OK 視窗的列距（列數優先於留白）
+        static let carRow: CGFloat = 4
     }
 
-    /// 進度條高度：歌曲 / 逐句
+    /// 進度條高度：歌曲 / 逐句（鎖定畫面）/ CarPlay 目前句 / 接下來的句子
     enum Bar {
         static let song: CGFloat = 4
         static let line: CGFloat = 3
+        static let carCurrent: CGFloat = 3
         static let upcoming: CGFloat = 2
     }
 

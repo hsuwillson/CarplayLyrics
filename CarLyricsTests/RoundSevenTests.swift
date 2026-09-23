@@ -78,11 +78,14 @@ final class ActivityUpcomingLineTests: XCTestCase {
         XCTAssertNil(over.upcoming)
     }
 
-    /// 即時動態內容有 4 KB 上限：視窗塞滿 4 句長句也要在限制內
+    /// 即時動態內容有 4 KB 上限：視窗塞滿 6 句（每句被政策截到 40 字）、其他欄位各 100 字也要在限制內
     func testEncodedSizeWithWindowStaysSmall() throws {
         let long = String(repeating: "測", count: 100)
-        let window = (0..<4).map {
-            ActivityUpcomingLine(text: long, startAt: t0.addingTimeInterval(Double($0) * 3),
+        let policy = LiveActivityWindowPolicy()
+        let rowText = policy.truncated(long)
+        XCTAssertEqual(rowText.count, policy.maxCharacters)
+        let window = (0..<policy.maxLines).map {
+            ActivityUpcomingLine(text: rowText, startAt: t0.addingTimeInterval(Double($0) * 3),
                                  endAt: t0.addingTimeInterval(Double($0) * 3 + 3))
         }
         let m = ActivityContentModel(currentLine: long, nextLine: long, trackName: long, artistName: long,
@@ -99,8 +102,8 @@ final class ActivityUpcomingLineTests: XCTestCase {
                                                 i: m.lineEndAt, w: m.upcoming))
         XCTAssertLessThan(data.count, 4096)
         let decoded = try JSONDecoder().decode([ActivityUpcomingLine].self, from: JSONEncoder().encode(window))
-        XCTAssertEqual(decoded.count, 4)
-        XCTAssertEqual(decoded[0].text, long)
+        XCTAssertEqual(decoded.count, 6)
+        XCTAssertEqual(decoded[0].text, rowText)
     }
 }
 
@@ -109,31 +112,47 @@ final class LiveActivityWindowPolicyTests: XCTestCase {
     private let t0 = Date(timeIntervalSince1970: 20_000)
 
     func testDefaults() {
-        XCTAssertEqual(policy.seconds, 45)
+        // 第十輪：CarPlay 約每分鐘才重畫一次 → 視窗拉長到 75 秒、最多 6 句（CarPlay 卡片最多列 5 句 + 目前句）
+        XCTAssertEqual(policy.seconds, 75)
         XCTAssertEqual(policy.minLines, 2)
-        XCTAssertEqual(policy.maxLines, 4)
+        XCTAssertEqual(policy.maxLines, 6)
+        XCTAssertEqual(policy.maxCharacters, 40)
     }
 
-    /// 每 3 秒一句、共 8 句，目前在第 2 句（位置 4.5）：45 秒內全部會開始，但最多 4 句
+    /// 每 3 秒一句、共 10 句，目前在第 2 句（位置 4.5）：75 秒內全部會開始，但最多 6 句
     func testWindowCappedAtMaxLines() {
-        let lines = Fixture.lines(count: 8)
+        let lines = Fixture.lines(count: 10)
         let w = policy.upcoming(lines: lines, currentIndex: 1, effectivePosition: 4.5, now: t0)
-        XCTAssertEqual(w.map(\.text), ["測試第3句", "測試第4句", "測試第5句", "測試第6句"])
+        XCTAssertEqual(w.map(\.text), ["測試第3句", "測試第4句", "測試第5句", "測試第6句", "測試第7句", "測試第8句"])
         // 第 3 句在 7 秒：距離現在 2.5 秒；結束 = 第 4 句開始（10 秒）
         XCTAssertEqual(w[0].startAt, t0.addingTimeInterval(2.5))
         XCTAssertEqual(w[0].endAt, t0.addingTimeInterval(5.5))
-        XCTAssertEqual(w[3].endAt, t0.addingTimeInterval(14.5))
+        XCTAssertEqual(w[5].endAt, t0.addingTimeInterval(20.5))
     }
 
-    /// 句子很疏（每 40 秒一句）：時間窗只涵蓋一句，但至少帶 2 句
+    /// 句子很疏（每 60 秒一句）：時間窗只涵蓋一句，但至少帶 2 句
     func testWindowKeepsMinLinesWhenSparse() {
-        let lines = Fixture.lines(count: 5, step: 40)
+        let lines = Fixture.lines(count: 5, step: 60)
         let w = policy.upcoming(lines: lines, currentIndex: 0, effectivePosition: 2, now: t0)
         XCTAssertEqual(w.map(\.text), ["測試第2句", "測試第3句"])
-        XCTAssertEqual(w[0].startAt, t0.addingTimeInterval(39))
-        // 時間窗內有 3 句（每 15 秒）：第 4 句在 46 秒 ≥ 47？位置 2 + 45 = 47，第 4 句 46 秒 < 47 → 3 句
-        let mid = Fixture.lines(count: 6, step: 15)
-        XCTAssertEqual(policy.upcoming(lines: mid, currentIndex: 0, effectivePosition: 2, now: t0).count, 3)
+        XCTAssertEqual(w[0].startAt, t0.addingTimeInterval(59))
+        // 時間窗內有 5 句（每 15 秒）：位置 2 + 75 = 77，第 6 句在 76 秒 < 77 → 5 句；第 7 句 91 秒 → 不帶
+        let mid = Fixture.lines(count: 8, step: 15)
+        XCTAssertEqual(policy.upcoming(lines: mid, currentIndex: 0, effectivePosition: 2, now: t0).count, 5)
+    }
+
+    /// 太長的句子截斷加「…」（一列只顯示一行，也守住 4 KB）
+    func testLongLinesAreTruncated() {
+        let long = String(repeating: "測", count: 60)
+        let lines = [LyricLine(time: 1, text: "測試第1句"), LyricLine(time: 4, text: long), LyricLine(time: 7, text: "測試第3句")]
+        let w = policy.upcoming(lines: lines, currentIndex: 0, effectivePosition: 2, now: t0)
+        XCTAssertEqual(w[0].text.count, 40)
+        XCTAssertTrue(w[0].text.hasSuffix("…"))
+        XCTAssertEqual(w[1].text, "測試第3句")
+        XCTAssertEqual(policy.truncated(String(repeating: "測", count: 40)).count, 40)
+        var tiny = policy
+        tiny.maxCharacters = 1
+        XCTAssertEqual(tiny.truncated("測試"), "測試", "上限 1 不截（沒有位置放省略號）")
     }
 
     func testWindowSkipsBlankLinesButUsesThemAsEnd() {

@@ -111,6 +111,8 @@ struct DiagnosticsView: View {
             LabeledContent("耗電狀態", value: model.power.description)
             LabeledContent("電源", value: Self.batteryLabel(UIDevice.current.batteryState))
             LabeledContent("車用音訊", value: model.isCarConnected ? "已連接" : "未連接")
+            LabeledContent("上車提醒", value: model.carConnectNoticeStatus)
+                .font(.caption)
             LabeledContent("開車模式",
                            value: model.isDrivingModeActive ? "生效（留在前景、螢幕不自動關閉）" : "未生效")
             LabeledContent("螢幕自動關閉", value: UIApplication.shared.isIdleTimerDisabled ? "已停用" : "正常")
@@ -150,6 +152,7 @@ struct DiagnosticsView: View {
             Button("重設統計") {
                 model.resetDiagnostics()
                 LyricsTimelineStore.resetRenderLagStats()
+                LiveActivityRenderStore.reset()
             }
         } header: {
             Text("背景執行")
@@ -221,6 +224,16 @@ struct DiagnosticsView: View {
             if let error = model.liveActivity.lastError {
                 LabeledContent("最近錯誤", value: error).font(.caption)
             }
+            // 小工具 extension 記下畫面實際被重畫的時刻：CarPlay 大約每分鐘一次、鎖定畫面每句一次
+            ForEach(LiveActivityRenderStore.Family.allCases, id: \.self) { family in
+                let log = LiveActivityRenderStore.load(family)
+                LabeledContent(family.label, value: log.summary ?? "尚無資料")
+                    .font(.caption)
+                if let at = log.lastRenderAt {
+                    LabeledContent("最近一次", value: "\(at.formatted(date: .omitted, time: .standard))（\(Int(now.timeIntervalSince(at))) 秒前）")
+                        .font(.caption)
+                }
+            }
             Button("結束並重新開始即時動態") { model.restartLiveActivity() }
         } header: {
             Text("即時動態")
@@ -231,7 +244,8 @@ struct DiagnosticsView: View {
                 把每次送出依當時的執行理由（前景／音訊／背景任務／定位）分開算。被擋期間依 15→30→60→120 秒探測，\
                 「背景送出」列每種間隔被套用的次數。stale = 超過 staleDate 沒更新，畫面依送出的視窗自己推進一次。\
                 「結束並重新開始」用來測試 CarPlay 儀表板是否只顯示連上車之後才開始的即時動態。\
-                即時動態最多 8 小時，中途打開 App 會自動換新。
+                「重畫間隔」是畫面真的被系統重畫的節奏（5 秒內的重複評估不算）：CarPlay 約每分鐘一次，\
+                兩次之間靠每句的進度條。即時動態最多 8 小時，中途打開 App 會自動換新。
                 """)
         }
     }

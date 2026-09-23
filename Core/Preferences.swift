@@ -38,6 +38,7 @@ final class Preferences {
         static let keepAwakeWhileDriving = "keepAwakeWhileDriving"
         static let dimScreenWhileDriving = "dimScreenWhileDriving"
         static let locationKeepAlive = "locationKeepAlive"
+        static let carConnectNotice = "carConnectNotice"
     }
 
     let defaults: UserDefaults
@@ -132,6 +133,12 @@ final class Preferences {
     var locationKeepAlive: Bool {
         get { bool(Key.locationKeepAlive, default: false) }
         set { defaults.set(newValue, forKey: Key.locationKeepAlive) }
+    }
+
+    /// 上車時提醒（本機通知）：連上 CarPlay 時 App 在背景、即時動態開不了，通知使用者點一下打開；預設開
+    var carConnectNotice: Bool {
+        get { bool(Key.carConnectNotice, default: true) }
+        set { defaults.set(newValue, forKey: Key.carConnectNotice) }
     }
 
     /// 控制中心 / 捷徑要求開啟的畫面（App 還沒啟動時先寫在這裡）

@@ -87,6 +87,14 @@ struct SetupChecklistView: View {
             }
 
             Section {
+                Toggle(isOn: $model.carConnectNoticeEnabled) {
+                    CheckLabel(title: "上車時提醒開歌詞（通知）",
+                               detail: model.carConnectNoticeEnabled ? model.carConnectNoticeStatus
+                                                                     : "上車時 App 在背景就通知你點一下（只出現在 iPhone 上）",
+                               // 選用：關著不算「需要處理」，只有開了卻沒有通知權限才提醒
+                               ok: !model.carConnectNoticeEnabled || model.carNotifier.authorization != .denied,
+                               optional: !model.carConnectNoticeEnabled)
+                }
                 Toggle(isOn: $model.locationKeepAliveEnabled) {
                     CheckLabel(title: "鎖定時也更新歌詞（使用定位，實驗）",
                                detail: model.locationKeepAliveEnabled ? model.locationKeepAliveStatus
@@ -99,7 +107,7 @@ struct SetupChecklistView: View {
             } header: {
                 Text("選用")
             } footer: {
-                Text("打開時會詢問定位權限，請選「使用 App 期間」。只在車上用，不記錄、不上傳位置。")
+                Text("上車提醒會詢問通知權限（iOS 不讓 App 在背景開始顯示歌詞，通知點一下就會開始）。定位會詢問定位權限，請選「使用 App 期間」；只在車上用，不記錄、不上傳位置。")
             }
 
             Section {
@@ -152,6 +160,8 @@ struct SetupChecklistView: View {
         }
         .navigationTitle(isOnboarding ? "開始使用" : "設定檢查")
         .navigationBarTitleDisplayMode(.inline)
+        // 通知權限在這裡問（看得到原因、而且不在車上；AppModel 會擋掉車上的情況）
+        .onAppear { model.requestCarNoticeAuthorizationIfNeeded() }
         .toolbar {
             if isOnboarding {
                 ToolbarItem(placement: .confirmationAction) {

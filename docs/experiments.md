@@ -33,6 +33,22 @@
     診斷頁「理由統計」與快照的「定位結論」直接寫出「定位保活期間全部被套用／全部被擋」。定位保活開始時會解除「背景被擋」，
     逐句更新立刻重新嘗試，不用等探測慢慢加快。
 
+- 第十輪（2026-09-23，build 45 實測 → build 46）：**CarPlay 儀表板約每分鐘才重畫一次即時動態**，即使 App 在前景、
+  每句更新都被系統套用（理由統計 前景 套用 58 擋 0）。Apple 文件 / WWDC25 216 / WWDC26 223 都沒有寫 CarPlay 的重畫節奏
+  （216 只說「your app should only communicate the most significant states」）。做法：
+  - `.small` 畫面改成「卡拉 OK 視窗」：目前句 + 接下來最多 5 句（`ViewThatFits` 放得下幾列就幾列），每一列底下一條
+    `ProgressView(timerInterval:countsDown: false)`（Apple 文件：fills as time passes），空的＝還沒到、在走＝正在唱、滿的＝唱過了，
+    完全不需要 App 更新；視窗拉長到 75 秒 / 最多 6 句、每句截到 40 字（4 KB 上限有測試）。
+  - 逐句 `Activity.update` 保留：鎖定畫面每句都會重畫（實測 stale 幾乎沒發生），每次更新的視窗也讓 CarPlay 下一次重畫時
+    從當下那句開始。一次更新約 1 KB 的 XPC，代價很小。
+  - 量法：小工具 extension 在畫面 body 記下重畫時刻（每個 family 一份，5 秒內合併，最多 40 筆，`LiveActivityRenderStore`），
+    診斷頁「CarPlay 重畫間隔（small）：最近 N 次，平均／最長 X 秒」直接寫出節奏。
+  同一份實測還修了：上車 / 即時動態開始 / 回前景 / 重新輪詢時閒置計時重新起算（原本 33 分鐘前的閒置讓即時動態 1 秒後就被收掉）；
+  CarPlay 路由閃斷（離開 10–20 秒又回來）先等 30 秒寬限再收；暫停後 Spotify 回 204、同一首 30 分鐘內回來不當成換歌
+  （歌詞沿用、不重載）；車上「沒在播放」前 2 分鐘每 5 秒問一次；上車時 App 在背景、即時動態開不了（"Target is not foreground"）
+  就送本機通知「點一下開始顯示 CarPlay 歌詞」（只出現在 iPhone：Apple 文件 `allowInCarPlay` 說要 CarPlay 授權才會上車機螢幕）；
+  「即時動態已開始（…背景）」在前景被記成背景是因為 `UIApplication.applicationState` 比 scenePhase 慢，改用 scenePhase。
+
 ## 小工具「每句一個 timeline entry」
 
 - Apple 文件：timeline entry 之間應該至少約 5 分鐘。實測 CarPlay 小工具不會照幾秒一次的 entry 換句。

@@ -58,6 +58,12 @@ final class LiveActivityManager {
     var probeInterval: TimeInterval { policy.blockedProbeInterval }
     /// 由 AppModel 維護：現在接著車用音訊嗎（開始即時動態時記進紀錄，看得出是上車前還是上車後開始的）
     var carConnected = false
+    /// 由 AppModel 維護（scenePhase）：App 在前景。以前用 `UIApplication.applicationState != .active`，
+    /// 但 scenePhase 已經是 `.active` 時它常常還是 `.inactive`（build 45：四次在前景開始都被記成「背景」），
+    /// 前景送出的更新也會被算成「音訊」理由。scenePhase 才是 AppModel 其他決策用的同一個來源
+    var isForeground = true
+    /// 即時動態真的開始了（AppModel 用來重新起算閒置計時）
+    var onStarted: (() -> Void)?
     /// 目前這個即時動態是在接著車用音訊時開始的嗎（nil = 沒有即時動態）
     private(set) var startedInCar: Bool?
     /// 由 AppModel 維護：定位保活執行中（送出時記成「定位」理由）
@@ -104,12 +110,11 @@ final class LiveActivityManager {
         }
     }
 
-    private var isInBackground: Bool {
-        UIApplication.shared.applicationState != .active
-    }
+    private var isInBackground: Bool { !isForeground }
 
     /// App 回到前景：解除封鎖、接手既有的即時動態、必要時換新
     func appBecameActive() {
+        isForeground = true
         endGrace(reason: "回到前景")
         startBlockedUntilForeground = false
         if backgroundBlocked { debugLog("回到前景，恢復即時動態更新（背景統計：\(cadence.summary)）") }
@@ -150,6 +155,7 @@ final class LiveActivityManager {
     /// 有背景任務撐著的這 25 秒若更新被套用，就證實是執行理由的問題、而不是頻率；
     /// 也順便讓鎖定後的前幾句還能更新。系統到期或時間到就結束，不會延長背景執行
     func appEnteredBackground() {
+        isForeground = false
         guard isActive, graceTask == .invalid else { return }
         // expirationHandler 是 @MainActor @Sendable（系統在主執行緒同步呼叫）
         let id = UIApplication.shared.beginBackgroundTask(withName: "CarLyrics.LiveActivityGrace") { [weak self] in
@@ -410,6 +416,7 @@ final class LiveActivityManager {
             let carText = carConnected ? "已連接" : "未連接"
             let phaseText = isInBackground ? "背景" : "前景"
             debugLog("即時動態已開始（staleDate \(Int(lastStaleInterval ?? 0)) 秒後；CarPlay \(carText)；\(phaseText)）")
+            onStarted?()
         } catch {
             startBlockedUntilForeground = true
             lastError = error.localizedDescription
