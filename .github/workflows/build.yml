@@ -188,6 +188,27 @@ jobs:
             --notes "Commit ${{ github.sha }}（未簽署，請用 AltStore / AltServer 安裝）" \
             --target "${{ github.sha }}"
 
+      # 更新 AltStore 來源：手機上的 AltStore 按一下就能更新（不必再從電腦 sideload）
+      - name: Update AltStore source
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess, datetime
+          path = "altstore/apps.json"
+          data = json.load(open(path))
+          size = os.path.getsize("CarLyrics.ipa")
+          version = data["apps"][0]["versions"][0]
+          version["buildVersion"] = "${{ github.run_number }}"
+          version["date"] = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+          version["size"] = size
+          version["localizedDescription"] = "CI #${{ github.run_number }}（commit ${{ github.sha }}）"
+          json.dump(data, open(path, "w"), ensure_ascii=False, indent=2)
+          PY
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add altstore/apps.json
+          git diff --cached --quiet || git commit -m "AltStore source: build #${{ github.run_number }} [skip ci]"
+          git push origin HEAD:main || echo "push 失敗（可能有新的 commit），下次建置會補上"
+
       - uses: actions/upload-artifact@v5
         with:
           name: CarLyrics-ipa

@@ -1,0 +1,38 @@
+{
+  "name": "CarLyrics",
+  "identifier": "com.willsonhsu.carlyrics.source",
+  "subtitle": "Spotify 同步歌詞（個人使用）",
+  "description": "CarLyrics 的自動更新來源：每次 CI 編譯成功就會更新這裡，AltStore 裡按一下就能更新。",
+  "iconURL": "https://raw.githubusercontent.com/hsuwillson/CarplayLyrics/main/altstore/icon.png",
+  "website": "https://github.com/hsuwillson/CarplayLyrics",
+  "tintColor": "5846D2",
+  "apps": [
+    {
+      "name": "CarLyrics",
+      "bundleIdentifier": "com.willsonhsu.CarLyrics",
+      "developerName": "Willson",
+      "subtitle": "在 CarPlay 與鎖定畫面顯示 Spotify 同步歌詞",
+      "localizedDescription": "開車時把 Spotify 正在播放的歌詞同步顯示在鎖定畫面、動態島與 CarPlay。個人使用，不上架。",
+      "iconURL": "https://raw.githubusercontent.com/hsuwillson/CarplayLyrics/main/altstore/icon.png",
+      "tintColor": "5846D2",
+      "category": "entertainment",
+      "screenshots": [],
+      "versions": [
+        {
+          "version": "0.1.0",
+          "buildVersion": "24",
+          "date": "2026-09-23T03:28:16Z",
+          "localizedDescription": "CI 自動建置。",
+          "downloadURL": "https://github.com/hsuwillson/CarplayLyrics/releases/download/latest-build/CarLyrics.ipa",
+          "size": 1078180,
+          "minOSVersion": "26.0"
+        }
+      ],
+      "appPermissions": {
+        "entitlements": [],
+        "privacy": []
+      }
+    }
+  ],
+  "news": []
+}

@@ -111,6 +111,11 @@ def main():
                    {"filename": "LaunchIcon@3x.png", "idiom": "universal", "scale": "3x"}],
         "info": {"author": "xcode", "version": 1}})
 
+    # AltStore 來源用的小圖示
+    altstore = os.path.join(ROOT, "altstore")
+    os.makedirs(altstore, exist_ok=True)
+    app_icon(180).save(os.path.join(altstore, "icon.png"))
+
     color_set("AccentColor", (88, 70, 210), (140, 125, 255))
     color_set("LaunchBackground", (18, 16, 40), (18, 16, 40))
     print("已產生", ASSETS)
