@@ -206,17 +206,20 @@ struct PlaybackReducer: Sendable {
         state.parkedAt = nil
 
         switch change {
-        case .newTrack where parkedFor != nil:
-            let seconds = Int(parkedFor ?? 0)
-            output.effects.append(.log("同一首回來了（\(np.isPlaying ? "播放中" : "暫停中")；Spotify 回報沒在播放 \(seconds) 秒），沿用歌詞"))
-            output.effects.append(.resumeTrack(np))
-            output.effects.append(.pushCurrent(important: true))
-            output.effects.append(.rescheduleTick)
-            output.effects.append(.publishTimeline(debounce: false))
         case .newTrack:
-            output.effects.append(.log("換歌：\(np.title) – \(np.artist)"))
-            output.effects.append(.newTrack(np))
-            output.effects.append(.publishTimeline(debounce: true))
+            if let parkedFor {
+                let seconds = Int(parkedFor)
+                let phase = np.isPlaying ? "播放中" : "暫停中"
+                output.effects.append(.log("同一首回來了（\(phase)；Spotify 回報沒在播放 \(seconds) 秒），沿用歌詞"))
+                output.effects.append(.resumeTrack(np))
+                output.effects.append(.pushCurrent(important: true))
+                output.effects.append(.rescheduleTick)
+                output.effects.append(.publishTimeline(debounce: false))
+            } else {
+                output.effects.append(.log("換歌：\(np.title) – \(np.artist)"))
+                output.effects.append(.newTrack(np))
+                output.effects.append(.publishTimeline(debounce: true))
+            }
         case .seeked:
             output.effects.append(.log("偵測到拖動進度 → \(formatTime(np.progress))"))
             output.effects.append(.pushCurrent(important: true))
