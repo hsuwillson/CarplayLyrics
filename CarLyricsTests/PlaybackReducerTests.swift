@@ -266,7 +266,7 @@ final class PlaybackReducerTests: XCTestCase {
 
     /// 暫停只是等紅燈：5 分鐘內不收起
     func testPausedKeepsActivityForFiveMinutes() {
-        let paused = Fixture.nowPlaying(isPlaying: false)
+        let paused = Fixture.nowPlaying(playing: false)
         send(play(paused, at: 0), context(0, endWhenIdle: true))
         let soon = send(play(paused, at: 120), context(120, endWhenIdle: true))
         XCTAssertFalse(soon.effects.contains(.endActivity))
@@ -276,8 +276,8 @@ final class PlaybackReducerTests: XCTestCase {
 
     /// 廣告 / Podcast 還在播：不收起（人還在聽，只是沒有歌詞）
     func testNonMusicKeepsActivity() {
-        send(.nonMusic(.ad, playing: true), context(0, endWhenIdle: true))
-        let out = send(.nonMusic(.ad, playing: true), context(600, endWhenIdle: true))
+        send(.nonMusic(.ad, isPlaying: true), context(0, endWhenIdle: true))
+        let out = send(.nonMusic(.ad, isPlaying: true), context(600, endWhenIdle: true))
         XCTAssertFalse(out.effects.contains(.endActivity))
     }
 
