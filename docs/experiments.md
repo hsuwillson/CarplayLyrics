@@ -53,3 +53,5 @@
 
 - Apple 文件：timeline entry 之間應該至少約 5 分鐘。實測 CarPlay 小工具不會照幾秒一次的 entry 換句。
 - 現在的做法：App 換句時呼叫 `reloadTimelines`（前景不計額度；背景有音訊工作階段時文件說不計額度），並由 `WidgetReloadPolicy` 監督，被節流時自動改用段落模式。
+
+<!-- rebuild 2026-09-24: release asset missing after run 48 -->
