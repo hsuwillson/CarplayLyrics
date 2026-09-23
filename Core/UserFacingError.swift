@@ -38,7 +38,10 @@ enum UserFacingError: Error, Equatable, Sendable {
             case .forbidden: self = .spotifyForbidden
             case .noActiveDevice: self = .spotifyNoDevice
             case .http(let code, _):
-                self = code == 401 ? .spotifyUnauthorized : .spotifyServer(code)
+                // 播放控制碰到 429：Spotify 暫時限制查詢（輪詢那邊另外處理 Retry-After），不要說成「無法回應」
+                if code == 401 { self = .spotifyUnauthorized }
+                else if code == 429 { self = .rateLimited(seconds: 5) }
+                else { self = .spotifyServer(code) }
             }
             return
         }

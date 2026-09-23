@@ -37,6 +37,7 @@ final class Preferences {
         static let lastHeartbeatInBackground = "lastHeartbeatInBackground"
         static let keepAwakeWhileDriving = "keepAwakeWhileDriving"
         static let dimScreenWhileDriving = "dimScreenWhileDriving"
+        static let locationKeepAlive = "locationKeepAlive"
     }
 
     let defaults: UserDefaults
@@ -124,6 +125,13 @@ final class Preferences {
     var dimScreenWhileDriving: Bool {
         get { bool(Key.dimScreenWhileDriving, default: false) }
         set { defaults.set(newValue, forKey: Key.dimScreenWhileDriving) }
+    }
+
+    /// 鎖定時也更新歌詞（開車時使用定位；實驗）：連著 CarPlay、即時動態進行中時開最低精準度的定位，
+    /// 讓系統多一個「定位」的執行理由，看背景更新是否不再被擋；預設關（多一個權限）
+    var locationKeepAlive: Bool {
+        get { bool(Key.locationKeepAlive, default: false) }
+        set { defaults.set(newValue, forKey: Key.locationKeepAlive) }
     }
 
     /// 控制中心 / 捷徑要求開啟的畫面（App 還沒啟動時先寫在這裡）

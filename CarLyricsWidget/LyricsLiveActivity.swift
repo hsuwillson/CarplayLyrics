@@ -270,8 +270,11 @@ private struct UpcomingRow: View {
             if let interval = row.interval {
                 TimerBar(interval: interval, tint: .secondary)
                     .frame(height: barHeight)
+                    .accessibilityHidden(true)
             }
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("接下來：\(row.text)")
     }
 }
 
@@ -326,6 +329,18 @@ private struct LockScreenActivityView: View {
 
     var body: some View {
         let shown = ShownLyrics(state: state, isStale: isStale)
+        // 鎖定畫面的即時動態高度有限（目前句最多三行時放不下三句預告）：放不下就少列幾句，不要被截掉
+        ViewThatFits(in: .vertical) {
+            layout(shown, rows: 3)
+            layout(shown, rows: 2)
+            layout(shown, rows: 1)
+            layout(shown, rows: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+    }
+
+    private func layout(_ shown: ShownLyrics, rows: Int) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             header
             CurrentLineView(state: state, shown: shown, font: .system(.title, design: .rounded, weight: .heavy),
@@ -336,7 +351,7 @@ private struct LockScreenActivityView: View {
                     .frame(height: 3)
             }
             // 接下來最多三句，各帶一條系統推進的細進度條：鎖定後更新被擋，也看得出唱到哪一句
-            ForEach(Array(shown.rows.prefix(3).enumerated()), id: \.offset) { i, row in
+            ForEach(Array(shown.rows.prefix(rows).enumerated()), id: \.offset) { i, row in
                 UpcomingRow(row: row, font: i == 0 ? .headline : .subheadline,
                             color: i == 0 ? Color.secondary : Color.secondary.opacity(0.6))
             }
@@ -344,10 +359,10 @@ private struct LockScreenActivityView: View {
                 Text(hint)
                     .font(.caption.weight(.medium))
                     .foregroundStyle(.orange)
+                    .lineLimit(1)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16)
     }
 
     /// 一行小字：哪一首（暫停時顯示暫停符號）

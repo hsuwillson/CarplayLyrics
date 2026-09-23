@@ -14,6 +14,8 @@ import UIKit
 ///   讓實測紀錄能分辨「一律禁止」還是「太密才被擋」。每次送出的內容都帶接下來幾句的視窗，
 ///   疏疏的探測被套用時畫面也是對的那一段
 /// - 剛進背景時申請一段背景任務（約 25 秒）：測試「只有背景音訊」以外的執行理由是否讓系統放行更新
+/// - 每次送出都記在當時的執行理由底下（前景 / 音訊 / 背景任務 / 定位保活，見 `LiveActivityReasonStats`）：
+///   定位保活實驗的結論就看「定位」那一格有沒有被套用
 /// - 接近 8 小時上限且 App 在前景時，自動重新開始一個
 @MainActor
 final class LiveActivityManager {
@@ -58,6 +60,10 @@ final class LiveActivityManager {
     var carConnected = false
     /// 目前這個即時動態是在接著車用音訊時開始的嗎（nil = 沒有即時動態）
     private(set) var startedInCar: Bool?
+    /// 由 AppModel 維護：定位保活執行中（送出時記成「定位」理由）
+    private(set) var locationActive = false
+    /// 各執行理由的送出 / 套用 / 被擋（診斷用 `reasons.summary`）
+    private(set) var reasons = LiveActivityReasonStats()
     /// 進背景後的背景任務（實驗：有背景任務時系統是否放行更新）
     private var graceTask = UIBackgroundTaskIdentifier.invalid
     private var graceTimer: Task<Void, Never>?
@@ -125,6 +131,18 @@ final class LiveActivityManager {
         if let startedAt, Date().timeIntervalSince(startedAt) > Self.renewAfter, let state = lastState {
             end(reason: "接近 8 小時上限，自動換新")
             start(state)
+        }
+    }
+
+    /// 定位保活開始 / 停止：開始時解除「背景被擋」，讓逐句更新在新的執行理由下重新嘗試
+    /// （否則要等探測慢慢加快才會恢復逐句，實驗結果會被拖慢好幾十秒）
+    func locationKeepAliveChanged(active: Bool) {
+        guard active != locationActive else { return }
+        locationActive = active
+        if active, backgroundBlocked {
+            backgroundBlocked = false
+            backgroundRejectStreak = 0
+            debugLog("定位保活開始：解除背景被擋，重新嘗試逐句更新")
         }
     }
 
@@ -258,13 +276,16 @@ final class LiveActivityManager {
         } else if background {
             cadence.recordPerLineSent()
         }
+        let reason = LiveActivityBackgroundReason.current(background: background, locationActive: locationActive,
+                                                          backgroundTask: graceTask != .invalid)
+        reasons.recordSent(reason)
         let content = ActivityContent(state: state, staleDate: staleDate(for: state, now: now))
         let previous = chain
         chain = Task { [weak self] in
             await previous?.value
             await activity.update(content)
             // 驗證不放進鏈裡：它要等一下才準，放進來會拖慢下一次更新
-            self?.scheduleVerify(state, on: activity, background: background, probe: probe)
+            self?.scheduleVerify(state, on: activity, background: background, probe: probe, reason: reason)
         }
     }
 
@@ -273,19 +294,19 @@ final class LiveActivityManager {
     /// 所以延遲一下再比，不一致時再給一次機會；期間若已送出（或記住）更新的內容，
     /// 這次就不算，只記一筆「未驗證」。
     private func scheduleVerify(_ state: State, on activity: Activity<LyricsActivityAttributes>, background: Bool,
-                                probe: Bool) {
+                                probe: Bool, reason: LiveActivityBackgroundReason) {
         verifyTask?.cancel()
         verifyTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 800_000_000)
             guard !Task.isCancelled, let self, self.lastState == state else { self?.verifySkipped += 1; return }
             if self.applied(state, on: activity) {
-                self.record(mismatch: nil, background: background, probe: probe, latency: 0.8)
+                self.record(mismatch: nil, background: background, probe: probe, reason: reason, latency: 0.8)
                 return
             }
             try? await Task.sleep(nanoseconds: 1_200_000_000)
             guard !Task.isCancelled, self.lastState == state else { self.verifySkipped += 1; return }
             self.record(mismatch: activity.content.state.model.mismatchField(comparedTo: state.model),
-                        background: background, probe: probe, latency: 2.0)
+                        background: background, probe: probe, reason: reason, latency: 2.0)
         }
     }
 
@@ -304,15 +325,18 @@ final class LiveActivityManager {
     /// - Parameters:
     ///   - background: 送出當下是否在背景（不是驗證當下）
     ///   - probe: 送出當下是被擋期間的探測（算進節奏統計）
+    ///   - reason: 送出當下 App 的執行理由（前景 / 音訊 / 背景任務 / 定位）
     ///   - latency: 送出後幾秒驗證到結果
-    private func record(mismatch: String?, background: Bool, probe: Bool, latency: TimeInterval) {
+    private func record(mismatch: String?, background: Bool, probe: Bool, reason: LiveActivityBackgroundReason,
+                        latency: TimeInterval) {
         let accepted = mismatch == nil
+        reasons.record(reason, accepted: accepted)
         if accepted {
             acceptedCount += 1
             backgroundRejectStreak = 0
             if loggedRejectionStreak {
                 loggedRejectionStreak = false
-                debugLog("即時動態更新恢復正常（\(background ? "背景" : "前景")）")
+                debugLog("即時動態更新恢復正常（\(reason.label)）")
             }
         } else {
             rejectedCount += 1
@@ -320,7 +344,7 @@ final class LiveActivityManager {
             lastMismatchField = mismatch
             if !loggedRejectionStreak {
                 loggedRejectionStreak = true
-                debugLog("即時動態更新沒有被系統套用（\(background ? "背景" : "前景")）")
+                debugLog("即時動態更新沒有被系統套用（\(reason.label)）")
             }
         }
         if probe {
@@ -338,7 +362,7 @@ final class LiveActivityManager {
             }
         }
         if (acceptedCount + rejectedCount) % 50 == 0 {
-            debugLog("即時動態統計：套用 \(acceptedCount)、被擋 \(rejectedCount)；背景：\(cadence.summary)")
+            debugLog("即時動態統計：套用 \(acceptedCount)、被擋 \(rejectedCount)；理由：\(reasons.summary)；背景節奏：\(cadence.summary)")
         }
     }
 

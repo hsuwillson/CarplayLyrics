@@ -22,6 +22,7 @@ struct DiagnosticsView: View {
             versionSection
             systemSection
             backgroundSection
+            locationSection
             liveActivitySection
             widgetSection
             lyricsSection
@@ -156,6 +157,27 @@ struct DiagnosticsView: View {
         }
     }
 
+    private var locationSection: some View {
+        Section {
+            LabeledContent("設定", value: model.locationKeepAliveEnabled ? "開" : "關")
+            LabeledContent("狀態", value: model.locationKeepAliveStatus)
+            LabeledContent("定位權限", value: model.locationKeepAlive.authorizationLabel)
+            if model.locationKeepAlive.isRunning {
+                LabeledContent("定位更新", value: "\(model.locationKeepAlive.updateCount) 次")
+                if let at = model.locationKeepAlive.startedAt {
+                    LabeledContent("開始時間", value: at.formatted(date: .omitted, time: .standard))
+                }
+            }
+            if let error = model.locationKeepAlive.lastError {
+                LabeledContent("最近錯誤", value: error).font(.caption)
+            }
+        } header: {
+            Text("定位保活（實驗）")
+        } footer: {
+            Text("開車、即時動態進行中時用最低精準度定位，讓系統多一個「定位」的執行理由。結果看「即時動態」的「理由統計」：「定位」那一格有套用就代表有效。")
+        }
+    }
+
     private var liveActivitySection: some View {
         Section {
             LabeledContent("狀態", value: model.liveActivity.stateDescription)
@@ -167,6 +189,11 @@ struct DiagnosticsView: View {
             }
             LabeledContent("背景送出（套用/送出）", value: model.liveActivity.cadence.summary)
                 .font(.caption)
+            LabeledContent("理由統計", value: model.liveActivity.reasons.summary)
+                .font(.caption)
+            if let verdict = model.liveActivity.reasons.locationVerdict {
+                LabeledContent("定位結論", value: verdict).font(.caption)
+            }
             if let grace = model.liveActivity.lastGraceResult {
                 LabeledContent("進背景的背景任務", value: grace).font(.caption)
             }
@@ -197,7 +224,7 @@ struct DiagnosticsView: View {
         } header: {
             Text("即時動態")
         } footer: {
-            Text("「未驗證」= 送出後 2 秒內又有新內容，來不及確認系統有沒有套用（歌詞密集時很常見，不是問題）。「被擋」多發生在 App 不在螢幕上時：iOS 會拒絕只靠背景音訊執行的 App 在背景送出的更新，所以開車時請讓 CarLyrics 留在前景。被擋期間會依 15→30→60→120 秒的節奏探測，「背景送出」列出每種間隔被套用的次數。stale = 超過 staleDate 沒更新，畫面會依送出的視窗自己推進一次，之後靠每句底下的進度條。「結束並重新開始」用來測試 CarPlay 儀表板是否只顯示連上車之後才開始的即時動態。iOS 最多讓即時動態持續 8 小時；長途中途打開 App 時會自動換新。")
+            Text("「未驗證」= 送出後 2 秒內又有新內容，來不及確認（歌詞密集時很常見，不是問題）。「被擋」多發生在 App 不在螢幕上時：iOS 會拒絕只靠背景音訊執行的 App 的更新。「理由統計」把每次送出依當時的執行理由（前景／音訊／背景任務／定位）分開算。被擋期間依 15→30→60→120 秒探測，「背景送出」列每種間隔被套用的次數。stale = 超過 staleDate 沒更新，畫面依送出的視窗自己推進一次。「結束並重新開始」用來測試 CarPlay 儀表板是否只顯示連上車之後才開始的即時動態。即時動態最多 8 小時，中途打開 App 會自動換新。")
         }
     }
 

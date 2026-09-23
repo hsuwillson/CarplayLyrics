@@ -115,6 +115,8 @@ private struct MainScreen: View {
         .padding(.top, Theme.Spacing.xs)
         .padding(.bottom, Theme.Spacing.m)
         .animation(.snappy, value: model.notice)
+        // 選擇 / 匯入歌詞成功：輕輕震一下
+        .sensoryFeedback(.success, trigger: model.lyricsChosenCount)
     }
 }
 
@@ -150,14 +152,21 @@ private struct WelcomeView: View {
             Button {
                 model.login()
             } label: {
-                Label("登入 Spotify", systemImage: "person.crop.circle")
-                    .font(.headline)
-                    .frame(maxWidth: .infinity, minHeight: 32)
+                Group {
+                    if model.isLoggingIn {
+                        Label { Text("登入中…") } icon: { ProgressView() }
+                    } else {
+                        Label("登入 Spotify", systemImage: "person.crop.circle")
+                    }
+                }
+                .font(.headline)
+                .frame(maxWidth: .infinity, minHeight: 32)
             }
             .buttonStyle(.glassProminent)
             .tint(Theme.spotifyGreen)
             .controlSize(.large)
-            Text("登入資訊只存在這支 iPhone 的鑰匙圈，不會傳到其他地方。")
+            .disabled(model.isLoggingIn)
+            Text("需要 Spotify Premium。登入資訊只存在這支 iPhone 的鑰匙圈，不會傳到其他地方。")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)

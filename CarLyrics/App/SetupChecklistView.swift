@@ -52,7 +52,7 @@ struct SetupChecklistView: View {
                 }
                 Toggle(isOn: $model.keepAwakeWhileDriving) {
                     CheckLabel(title: "開車時保持螢幕開著",
-                               detail: "CarLyrics 不在螢幕上時 iOS 會擋掉更新，CarPlay 歌詞會停住",
+                               detail: "手機鎖定後 iOS 會擋掉更新，CarPlay 歌詞會停住",
                                ok: model.keepAwakeWhileDriving)
                 }
                 if let days = model.signingDaysRemaining {
@@ -64,10 +64,25 @@ struct SetupChecklistView: View {
             }
 
             Section {
+                Toggle(isOn: $model.locationKeepAliveEnabled) {
+                    CheckLabel(title: "鎖定時也更新歌詞（使用定位，實驗）",
+                               detail: model.locationKeepAliveEnabled ? model.locationKeepAliveStatus
+                                                                       : "開車時用最低精準度定位，讓鎖定後也有機會更新",
+                               // 選用：關著也不算「需要處理」，只有開了卻沒有定位權限才提醒
+                               ok: !model.locationKeepAliveEnabled
+                                   || model.locationKeepAlive.authorization != .denied)
+                }
+            } header: {
+                Text("選用")
+            } footer: {
+                Text("打開時會詢問定位權限，請選「使用 App 期間」。只在車上用，不記錄、不上傳位置。")
+            }
+
+            Section {
                 VStack(alignment: .leading, spacing: 10) {
                     Label("上車自動打開 CarLyrics", systemImage: "wand.and.stars")
                         .font(.headline)
-                    Text("iOS 只允許 App 打開時開始顯示鎖定畫面與 CarPlay 歌詞，而且 App 不在螢幕上時會擋掉它的更新。設一次捷徑自動化，之後每次上車都會自動打開；然後把手機放在車架上、讓 CarLyrics 留在螢幕上（專注模式幾乎全黑），CarPlay 歌詞就會逐句即時更新。")
+                    Text("iOS 只讓 App 在打開時開始顯示鎖定畫面與 CarPlay 歌詞。設一次捷徑自動化，之後每次上車都會自動打開；把手機放在車架上、讓 CarLyrics 留在螢幕上（專注模式幾乎全黑），CarPlay 歌詞就會逐句更新。")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                     VStack(alignment: .leading, spacing: 4) {
@@ -78,7 +93,7 @@ struct SetupChecklistView: View {
                     }
                     // iOS 在手機鎖定時不一定會真的把 App 叫到前景（實測前先不要說死）：給一個保險做法
                     Label {
-                        Text("手機鎖著時自動化不一定會打開 App。上車後鎖定畫面沒有歌詞：點一下自動化的通知、或打開 CarLyrics 一次；還是沒有就到「設定」按「現在顯示鎖定畫面歌詞」。鎖定手機後 CarPlay 儀表板的歌詞會停在最後一句（iOS 限制）；這時 CarPlay 小工具頁的歌詞仍會照時間軸繼續。")
+                        Text("手機鎖著時自動化不一定會打開 App。上車後鎖定畫面沒有歌詞：點一下自動化的通知、或打開 CarLyrics 一次；還是沒有就到「設定」按「現在顯示鎖定畫面歌詞」。鎖定後 CarPlay 儀表板的歌詞會停住（iOS 限制），小工具頁仍會照時間軸繼續。")
                     } icon: {
                         Image(systemName: "info.circle")
                     }

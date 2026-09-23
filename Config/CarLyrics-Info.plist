@@ -18,7 +18,10 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
+		<string>location</string>
 	</array>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>只在你開啟「鎖定時也更新歌詞」並連上 CarPlay 時使用：讓 iOS 在手機鎖定後仍允許 CarLyrics 更新鎖定畫面與 CarPlay 的歌詞。只用最低精準度，不會記錄或上傳你的位置。</string>
 	<key>UILaunchScreen</key>
 	<dict>
 		<key>UIColorName</key>

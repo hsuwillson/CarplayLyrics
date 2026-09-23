@@ -19,6 +19,9 @@ final class AppModel {
     @ObservationIgnored let widget = WidgetTimelinePublisher()
     @ObservationIgnored let power = PowerMonitor()
     @ObservationIgnored private let screen = ScreenDimmer()
+    /// 定位保活（實驗）：開車、即時動態進行中時用最低精準度定位，讓系統多一個執行理由
+    @ObservationIgnored let locationKeepAlive = LocationKeepAlive()
+    @ObservationIgnored private let locationPolicy = LocationKeepAlivePolicy()
     /// 開車模式（留在前景讓 CarPlay 歌詞即時更新）的決策
     @ObservationIgnored private let drivingPolicy = DrivingModePolicy()
     /// 即時動態每次更新帶的「接下來幾句」視窗
@@ -51,6 +54,8 @@ final class AppModel {
     private(set) var controlFailureCount = 0
     /// 手動選擇 / 匯入歌詞成功
     private(set) var lyricsChosenCount = 0
+    /// Spotify 登入視窗開著（按鈕變成「登入中…」，避免連按兩次開兩個視窗）
+    private(set) var isLoggingIn = false
     /// 接著車用音訊（CarPlay / 車用藍牙）
     private(set) var isCarConnected = false
     /// 開車模式生效中：在前景、接著 CarPlay、設定有開 → 螢幕不自動關閉（必要時調暗）
@@ -145,6 +150,18 @@ final class AppModel {
     var dimScreenWhileDriving: Bool {
         didSet {
             preferences.dimScreenWhileDriving = dimScreenWhileDriving
+            updateIdleTimer()
+        }
+    }
+
+    /// 鎖定時也更新歌詞（開車時使用定位；實驗）。iOS 擋的是「只有背景音訊」的程序，
+    /// 開車時多開一個最低精準度的定位，看背景更新是否不再被擋（見 LocationKeepAlivePolicy）
+    var locationKeepAliveEnabled: Bool {
+        didSet {
+            preferences.locationKeepAlive = locationKeepAliveEnabled
+            debugLog(locationKeepAliveEnabled ? "設定：鎖定時也更新歌詞（定位）開" : "設定：鎖定時也更新歌詞（定位）關")
+            // 打開設定的當下就問權限（在家問，不要等到開車時才跳出系統詢問）
+            if locationKeepAliveEnabled, isForeground { locationKeepAlive.requestAuthorization() }
             updateIdleTimer()
         }
     }
@@ -248,6 +265,7 @@ final class AppModel {
         keepScreenOn = preferences.keepScreenOn
         keepAwakeWhileDriving = preferences.keepAwakeWhileDriving
         dimScreenWhileDriving = preferences.dimScreenWhileDriving
+        locationKeepAliveEnabled = preferences.locationKeepAlive
         focusFontScale = preferences.focusFontScale
         focusLandscapeLock = preferences.focusLandscapeLock
         autoFocusInCar = preferences.autoFocusInCar
@@ -262,6 +280,8 @@ final class AppModel {
         checkPreviousHeartbeat()
         logSigningStatus()
         lyrics.onChange = { [weak self] in self?.lyricsChanged() }
+        // 使用者在系統詢問按了允許 / 不允許：重新決定要不要開始定位保活
+        locationKeepAlive.onAuthorizationChanged = { [weak self] in self?.updateIdleTimer() }
         // 來電 / Siri 結束：閒置計時重新開始（通話期間 Spotify 是暫停的）
         audioKeeper.onInterruptionEnded = { [weak self] in
             // 通話期間 Spotify 是暫停的：閒置計時重新開始
@@ -291,6 +311,8 @@ final class AppModel {
             if connected {
                 debugLog("連上車用音訊，開始即時動態")
                 self.pushLiveActivity(placeholder: true, priority: .important)
+                // 即時動態開始了才輪得到定位保活
+                self.updateIdleTimer()
             } else {
                 self.endLiveActivity(reason: "離開 CarPlay")
             }
@@ -410,6 +432,8 @@ final class AppModel {
         // 不等第一次輪詢：先開一個即時動態，避免使用者開 App 後馬上鎖定就沒有
         pushLiveActivity(placeholder: true, priority: .important)
         liveActivity.flush()
+        // 即時動態剛開始：定位保活（只能在前景開始）現在就決定
+        updateIdleTimer()
     }
 
     func appEnteredBackground() {
@@ -420,7 +444,11 @@ final class AppModel {
             audioKeeper.ensureRunning()
             debugLog("進入背景，持續執行")
             if isCarConnected, liveActivity.isActive {
-                debugLog("在車上進入背景：iOS 會擋掉背景的即時動態更新，CarPlay 歌詞會停在最後一次套用的內容（staleDate 到了畫面自己依視窗推進一次，之後靠每句的進度條）；小工具照時間軸繼續")
+                if locationKeepAlive.isRunning {
+                    debugLog("在車上進入背景（定位保活執行中）：看接下來的更新是「定位」理由被套用還是被擋")
+                } else {
+                    debugLog("在車上進入背景：iOS 會擋掉背景的即時動態更新，CarPlay 歌詞會停在最後一次套用的內容（staleDate 到了畫面自己依視窗推進一次，之後靠每句的進度條）；小工具照時間軸繼續")
+                }
             }
             // 實驗：有背景任務撐著時系統是否放行更新（約 25 秒，之後自動結束）
             liveActivity.appEnteredBackground()
@@ -471,7 +499,10 @@ final class AppModel {
     // MARK: - 登入
 
     func login() {
+        guard !isLoggingIn else { return }
+        isLoggingIn = true
         Task {
+            defer { isLoggingIn = false }
             do {
                 try await auth.login()
                 debugLog("登入成功")
@@ -908,12 +939,15 @@ final class AppModel {
         debugLog("手動開始即時動態（略過車用音訊判定，直到下次收起）")
         pushLiveActivity(placeholder: true, priority: .important)
         liveActivity.flush()
+        updateIdleTimer()
     }
 
     /// AppModel 主動收起即時動態都走這裡：同時清掉手動例外，下次還是照設定的規則
     private func endLiveActivity(reason: String) {
         liveActivityCarOverride = false
         liveActivity.end(reason: reason)
+        // 沒有即時動態就不需要定位保活
+        updateLocationKeepAlive()
     }
 
     /// 診斷用：結束再重新開始一個即時動態（測試 CarPlay 儀表板是否只顯示「連上車之後才開始」的即時動態）。
@@ -1048,7 +1082,41 @@ final class AppModel {
         DrivingModePolicy.Input(isForeground: isForeground, carConnected: isCarConnected,
                                 keepAwakeWhileDriving: keepAwakeWhileDriving, dimWhileDriving: dimScreenWhileDriving,
                                 liveActivityEnabled: liveActivityEnabled && auth.isLoggedIn,
-                                focusModeActive: focusModeActive, keepScreenOn: keepScreenOn, isPlaying: isPlaying)
+                                focusModeActive: focusModeActive, keepScreenOn: keepScreenOn, isPlaying: isPlaying,
+                                locationKeepAlive: locationKeepAlive.isRunning)
+    }
+
+    private var locationInput: LocationKeepAlivePolicy.Input {
+        LocationKeepAlivePolicy.Input(enabled: locationKeepAliveEnabled, loggedIn: auth.isLoggedIn,
+                                      liveActivityEnabled: liveActivityEnabled,
+                                      inCar: isCarConnected || liveActivityCarOverride,
+                                      activityIsActive: liveActivity.isActive, isForeground: isForeground,
+                                      authorization: locationKeepAlive.authorization,
+                                      isRunning: locationKeepAlive.isRunning)
+    }
+
+    /// 設定頁的一句話狀態
+    var locationKeepAliveStatus: String {
+        locationPolicy.status(locationInput)
+    }
+
+    /// 定位保活該開就開、該停就停（純決策在 LocationKeepAlivePolicy）。
+    /// 由 updateIdleTimer 帶動：進出前景、上下車、每次輪詢、改設定時都會重新評估
+    private func updateLocationKeepAlive() {
+        switch locationPolicy.decide(locationInput) {
+        case .start:
+            locationKeepAlive.start()
+        case .stop:
+            locationKeepAlive.stop(reason: !locationKeepAliveEnabled ? "設定關閉"
+                                   : !liveActivity.isActive ? "即時動態已結束"
+                                   : !(isCarConnected || liveActivityCarOverride) ? "離開 CarPlay"
+                                   : !auth.isLoggedIn ? "登出" : "不再需要")
+        case .requestAuthorization:
+            locationKeepAlive.requestAuthorization()
+        case .keep:
+            break
+        }
+        liveActivity.locationKeepAliveChanged(active: locationKeepAlive.isRunning)
     }
 
     /// 為什麼要留在螢幕上（主畫面 / 專注模式的一行提示）；不用提醒時 nil
@@ -1059,6 +1127,8 @@ final class AppModel {
     /// 螢幕不自動關閉 / 調暗：前景、專注模式、播放時常亮、開車模式都在這裡決定
     /// （進出前景、上下車、播放暫停、改設定時都會呼叫）
     private func updateIdleTimer() {
+        // 先決定定位保活（開車模式的提示要知道它有沒有在跑）
+        updateLocationKeepAlive()
         let input = drivingInput
         let driving = drivingPolicy.isDriving(input)
         switch drivingPolicy.change(from: isDrivingModeActive, to: driving) {
@@ -1123,7 +1193,8 @@ final class AppModel {
         r.add("設定", [("鎖定畫面歌詞", liveActivityMode.label), ("背景同步", R.yesNo(backgroundEnabled)),
                       ("閒置收起", R.yesNo(endActivityWhenIdle)), ("上車專注", R.yesNo(autoFocusInCar)),
                       ("螢幕常亮", R.yesNo(keepScreenOn)), ("開車保持螢幕", R.yesNo(keepAwakeWhileDriving)),
-                      ("開車調暗", R.yesNo(dimScreenWhileDriving)), ("Wi-Fi 預載佇列", R.yesNo(prefetchQueueOnWiFi)),
+                      ("開車調暗", R.yesNo(dimScreenWhileDriving)), ("定位保活", R.yesNo(locationKeepAliveEnabled)),
+                      ("Wi-Fi 預載佇列", R.yesNo(prefetchQueueOnWiFi)),
                       ("歌詞提前", String(format: "全部 %+.2f / 這首 %+.2f", globalOffset, trackOffset))])
         r.add("播放", [("前景", R.yesNo(isForeground)), ("開車模式", isDrivingModeActive ? "生效" : nil),
                       ("螢幕", UIApplication.shared.isIdleTimerDisabled ? "不自動關閉" : "會自動關閉"),
@@ -1149,6 +1220,8 @@ final class AppModel {
                           ("未驗證", "\(liveActivity.verifySkipped)"),
                           ("背景被擋", liveActivity.backgroundBlocked ? "是（每 \(Int(liveActivity.probeInterval)) 秒探測）" : nil),
                           ("背景統計", liveActivity.cadence.summary),
+                          ("理由統計", liveActivity.reasons.summary),
+                          ("定位結論", liveActivity.reasons.locationVerdict),
                           ("背景任務", liveActivity.lastGraceResult),
                           ("開始時 CarPlay", liveActivity.startedInCar.map { R.yesNo($0) }),
                           ("staleDate", liveActivity.lastStaleInterval.map { "\(Int($0)) 秒後" }),
@@ -1169,6 +1242,10 @@ final class AppModel {
                           ("中斷中", audioKeeper.interrupted ? "是" : nil),
                           ("CarPlay", R.yesNo(isCarConnected)),
                           ("輸出", SilentAudioKeeper.outputDescription())])
+        r.add("定位保活", [("狀態", locationKeepAliveStatus), ("權限", locationKeepAlive.authorizationLabel),
+                          ("執行中", locationKeepAlive.isRunning ? "是（\(locationKeepAlive.updateCount) 次更新）" : nil),
+                          ("開始", R.ago(locationKeepAlive.startedAt, now: now)),
+                          ("最近錯誤", locationKeepAlive.lastError)])
         r.add("系統", [("網路", reachability.isOnline ? (reachability.isWiFi ? "Wi-Fi" : "行動網路 / 計量") : "離線"),
                       ("低耗電", R.yesNo(info.isLowPowerModeEnabled)), ("溫度", Self.thermalLabel(info.thermalState)),
                       ("電量", R.percent(device.batteryLevel)), ("充電", Self.batteryLabel(device.batteryState))])

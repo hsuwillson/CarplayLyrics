@@ -19,6 +19,20 @@
   (3) 進背景時申請一次 `beginBackgroundTask`（約 25 秒），看有背景任務撐著時更新是否被套用。
   結論看下一份實測紀錄的「背景送出」與「背景任務」兩行。
 
+- 第八輪（2026-09-23，build 41）：**重做背景定位實驗，這次量得清楚。** 查證：
+  - Apple 文件 `allowsBackgroundLocationUpdates`：在前景開始定位更新後「Core Location configures the system to keep the app
+    running to receive continuous background location updates」，「使用 App 期間」授權就夠（背景時狀態列有藍色定位指示）。
+  - Apple 文件 `pausesLocationUpdatesAutomatically`：「使用 App 期間」的 App 要持續收到更新，建議關掉自動暫停並用
+    `kCLLocationAccuracyThreeKilometers`（省電）。`CLBackgroundActivitySession`（iOS 17+）：「keeps your app in use in the background」，
+    需要 `UIBackgroundModes` 含 `location`（WWDC23 10180）。
+  - 開發者論壇 thread 717701：同一支 App 用背景定位或子母畫面時，背景更新即時動態正常；只有 `.playback` 背景音訊被擋。
+  - 做法：設定「鎖定時也更新歌詞（使用定位）」（預設關）。只在連著 CarPlay（或按過「現在顯示」）且即時動態進行中時，
+    在前景開 `CLLocationManager`（3 km 精準度、不自動暫停、`allowsBackgroundLocationUpdates`）+ `CLBackgroundActivitySession`；
+    下車、即時動態結束、登出、關設定就停。位置不記錄、不上傳。決策在 `LocationKeepAlivePolicy`（Core，100% 測試）。
+  - 量法：每次送出即時動態更新都記在當時的執行理由底下（前景／音訊／背景任務／定位，`LiveActivityReasonStats`），
+    診斷頁「理由統計」與快照的「定位結論」直接寫出「定位保活期間全部被套用／全部被擋」。定位保活開始時會解除「背景被擋」，
+    逐句更新立刻重新嘗試，不用等探測慢慢加快。
+
 ## 小工具「每句一個 timeline entry」
 
 - Apple 文件：timeline entry 之間應該至少約 5 分鐘。實測 CarPlay 小工具不會照幾秒一次的 entry 換句。

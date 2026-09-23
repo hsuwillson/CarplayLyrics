@@ -24,10 +24,12 @@ struct DrivingModePolicy: Equatable, Sendable {
         /// 設定：播放時螢幕不自動關閉（開車以外也適用）
         var keepScreenOn: Bool
         var isPlaying: Bool
+        /// 定位保活執行中（鎖定後也會嘗試更新；見 LocationKeepAlivePolicy）：提示改成說明實驗中
+        var locationKeepAlive: Bool
 
         init(isForeground: Bool, carConnected: Bool, keepAwakeWhileDriving: Bool = true,
              dimWhileDriving: Bool = false, liveActivityEnabled: Bool = true, focusModeActive: Bool = false,
-             keepScreenOn: Bool = false, isPlaying: Bool = false) {
+             keepScreenOn: Bool = false, isPlaying: Bool = false, locationKeepAlive: Bool = false) {
             self.isForeground = isForeground
             self.carConnected = carConnected
             self.keepAwakeWhileDriving = keepAwakeWhileDriving
@@ -36,6 +38,7 @@ struct DrivingModePolicy: Equatable, Sendable {
             self.focusModeActive = focusModeActive
             self.keepScreenOn = keepScreenOn
             self.isPlaying = isPlaying
+            self.locationKeepAlive = locationKeepAlive
         }
     }
 
@@ -75,6 +78,9 @@ struct DrivingModePolicy: Equatable, Sendable {
     /// 給畫面的一句話：為什麼要留在螢幕上；不需要提醒時 nil
     func hint(_ i: Input) -> String? {
         guard i.carConnected, i.liveActivityEnabled else { return nil }
+        if i.locationKeepAlive {
+            return "定位保活執行中：鎖定後也會嘗試更新 CarPlay 歌詞（實驗）。沒跟上就回到 CarLyrics"
+        }
         return i.keepAwakeWhileDriving
             ? "讓 CarLyrics 留在螢幕上，CarPlay 歌詞才會即時更新（鎖定後只剩小工具會動）"
             : "鎖定手機後 iOS 會停止更新 CarPlay 歌詞；到設定打開「開車時保持螢幕開著」"
