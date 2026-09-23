@@ -44,12 +44,22 @@ struct LyricsTimelineSnapshot: Codable, Equatable, Sendable {
         return start...start.addingTimeInterval(duration)
     }
 
+    /// 畫面不會隨時間改變（沒在播放、或沒有同步歌詞）→ 起點是多少都不影響顯示
+    var isStatic: Bool { !isPlaying || lines.isEmpty }
+
     /// 內容相同、起點相差不到 0.3 秒 → 不必重新載入
     func isSameTimeline(as other: LyricsTimelineSnapshot) -> Bool {
-        trackID == other.trackID && lines == other.lines && isPlaying == other.isPlaying
-            && message == other.message && title == other.title && mode == other.mode
-            && appliedOffset == other.appliedOffset && artworkFile == other.artworkFile
-            && abs(songStart.timeIntervalSince(other.songStart)) < 0.3
+        guard trackID == other.trackID, lines == other.lines, isPlaying == other.isPlaying,
+              message == other.message, title == other.title, mode == other.mode,
+              appliedOffset == other.appliedOffset, artworkFile == other.artworkFile else { return false }
+        return isStatic || abs(songStart.timeIntervalSince(other.songStart)) < 0.3
+    }
+
+    /// 內容相同但起點漂移了（只要重寫檔案，不必請系統重新整理）
+    func needsFileRefresh(comparedTo other: LyricsTimelineSnapshot) -> Bool {
+        guard !isStatic, trackID == other.trackID, lines == other.lines, isPlaying == other.isPlaying,
+              message == other.message, mode == other.mode, appliedOffset == other.appliedOffset else { return false }
+        return abs(songStart.timeIntervalSince(other.songStart)) >= 0.3
     }
 
     /// 從 `now` 開始的畫面：第一個是現在，之後每換一句一個
@@ -63,11 +73,24 @@ struct LyricsTimelineSnapshot: Codable, Equatable, Sendable {
         let currentIndex = lines.index(at: position)
         var result = [frame(at: now, index: currentIndex)]
         let start = (currentIndex ?? -1) + 1
-        guard start < lines.count else { return result }
-        for j in start..<min(lines.count, start + limit) {
-            result.append(frame(at: songStart.addingTimeInterval(lines[j].time), index: j))
+        let upper = min(lines.count, start + limit)
+        if start < upper {
+            for j in start..<upper {
+                result.append(frame(at: songStart.addingTimeInterval(lines[j].time), index: j))
+            }
+        }
+        // 收尾：App 若被系統終止，時間軸播完不會停在最後一句假裝還在同步
+        if upper >= lines.count, let end = endOfSong, let last = result.last, end > last.date {
+            result.append(LyricsTimelineFrame(date: end, index: nil, current: "♪ 等待下一首",
+                                              upcoming: ["沒有更新的話，打開 CarLyrics"]))
         }
         return result
+    }
+
+    /// 歌曲結束後 3 秒（長度未知時 nil）
+    private var endOfSong: Date? {
+        guard duration > 0 else { return nil }
+        return songStart.addingTimeInterval(appliedOffset + duration + 3)
     }
 
     private var upcomingCount: Int { mode == .paragraph ? 2 : 1 }
@@ -76,11 +99,15 @@ struct LyricsTimelineSnapshot: Codable, Equatable, Sendable {
         let from = (index ?? -1) + 1
         let upcoming = lines[min(from, lines.count)..<min(lines.count, from + upcomingCount)]
             .map(\.text).filter { !$0.isEmpty }
+        // 間奏 / 前奏：下一句的真實時刻，讓畫面自己倒數（不需要任何更新）
+        let nextAt = from < lines.count ? songStart.addingTimeInterval(lines[from].time) : nil
         guard let index else {
-            return LyricsTimelineFrame(date: date, index: nil, current: "♪ \(title)", upcoming: upcoming)
+            return LyricsTimelineFrame(date: date, index: nil, current: "♪ \(title)",
+                                       upcoming: upcoming, nextLineAt: nextAt)
         }
         let text = lines[index].text
-        return LyricsTimelineFrame(date: date, index: index, current: text.isEmpty ? "♪" : text, upcoming: upcoming)
+        return LyricsTimelineFrame(date: date, index: index, current: text.isEmpty ? "♪" : text,
+                                   upcoming: upcoming, nextLineAt: nextAt)
     }
 }
 
@@ -90,6 +117,26 @@ struct LyricsTimelineFrame: Equatable, Sendable {
     let current: String
     /// 之後要唱的句子（逐句模式 1 句、段落模式 2 句）
     let upcoming: [String]
+    /// 下一句開始的真實時刻（間奏倒數用）
+    var nextLineAt: Date?
+
+    init(date: Date, index: Int?, current: String, upcoming: [String], nextLineAt: Date? = nil) {
+        self.date = date
+        self.index = index
+        self.current = current
+        self.upcoming = upcoming
+        self.nextLineAt = nextLineAt
+    }
 
     var next: String { upcoming.first ?? "" }
+
+    /// 間奏超過這麼久才值得顯示倒數
+    static let countdownThreshold: TimeInterval = 5
+
+    /// 目前是間奏（沒有歌詞文字），且下一句還要等一下 → 顯示倒數的區間
+    func countdownInterval(from date: Date) -> ClosedRange<Date>? {
+        guard current.hasPrefix("♪"), let nextLineAt, nextLineAt.timeIntervalSince(date) > Self.countdownThreshold
+        else { return nil }
+        return date...nextLineAt
+    }
 }

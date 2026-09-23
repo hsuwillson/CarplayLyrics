@@ -31,6 +31,8 @@ struct OpenCarLyricsIntent: OpenIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
+        // 冷啟動時畫面可能還沒掛上 → 先寫一份，AppModel 啟動時會讀
+        Preferences().pendingScreen = target.rawValue
         NotificationCenter.default.post(name: .carLyricsOpenScreen, object: nil,
                                         userInfo: ["screen": target.rawValue])
         return .result()

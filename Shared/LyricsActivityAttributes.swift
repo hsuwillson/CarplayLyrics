@@ -15,6 +15,8 @@ struct LyricsActivityAttributes: ActivityAttributes {
         var songEnd: Date?
         /// App Group 裡的小張封面檔名
         var artworkFile: String?
+        /// 間奏時下一句開始的時刻（畫面自己倒數，不需要更新）
+        var nextLineAt: Date?
 
         init(_ m: ActivityContentModel) {
             currentLine = m.currentLine
@@ -25,6 +27,20 @@ struct LyricsActivityAttributes: ActivityAttributes {
             songStart = m.songStart
             songEnd = m.songEnd
             artworkFile = m.artworkFile
+            nextLineAt = m.nextLineAt
+        }
+
+        var model: ActivityContentModel {
+            ActivityContentModel(currentLine: currentLine, nextLine: nextLine, trackName: trackName,
+                                 artistName: artistName, isPlaying: isPlaying, songStart: songStart,
+                                 songEnd: songEnd, artworkFile: artworkFile, nextLineAt: nextLineAt)
+        }
+
+        /// 間奏倒數的區間（沒有或已經過了就是 nil）
+        func countdownInterval(from date: Date) -> ClosedRange<Date>? {
+            guard currentLine.hasPrefix("♪"), let nextLineAt,
+                  nextLineAt.timeIntervalSince(date) > LyricsTimelineFrame.countdownThreshold else { return nil }
+            return date...nextLineAt
         }
 
         var playbackInterval: ClosedRange<Date>? {

@@ -10,6 +10,11 @@ enum SessionState: Equatable, Sendable {
     case paused
     case playing
 
+    var isNonMusic: Bool {
+        if case .nonMusic = self { return true }
+        return false
+    }
+
     var label: String {
         switch self {
         case .loggedOut: return "請先登入 Spotify"

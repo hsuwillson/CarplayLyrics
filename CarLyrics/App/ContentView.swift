@@ -59,14 +59,23 @@ private struct MainScreen: View {
         .onAppear {
             if !model.hasSeenSetup { showSetup = true }
         }
-        .onChange(of: model.requestedScreen) { _, screen in
+        // initial: true → 冷啟動時（控制中心 / 捷徑先於畫面）也看得到
+        .onChange(of: model.requestedScreen, initial: true) { _, screen in
             guard let screen else { return }
-            model.requestedScreen = nil
-            if screen == .focus, model.auth.isLoggedIn { showFocus = true }
+            model.consumeRequestedScreen()
+            guard screen == .focus, model.auth.isLoggedIn else { return }
+            // 同時只能呈現一個 modal：先關掉其他 sheet 再開專注模式
+            showSettings = false
+            showSetup = false
+            picker = nil
+            Task {
+                try? await Task.sleep(for: .milliseconds(350))
+                showFocus = true
+            }
         }
         .onOpenURL { url in
             // carlyrics://focus（即時動態、小工具點一下）
-            if url.host == "focus" { model.requestedScreen = .focus }
+            if url.host == "focus" { model.request(screen: .focus) }
         }
     }
 

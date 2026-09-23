@@ -118,6 +118,13 @@ private struct DrivingSection: View {
             Toggle(isOn: $model.keepScreenOn) {
                 Label("播放時螢幕不自動關閉", systemImage: "sun.max")
             }
+            Toggle(isOn: $model.autoFocusInCar) {
+                Label("連上車用音訊時進入專注模式", systemImage: "car.side")
+            }
+            if model.isCarConnected {
+                LabeledContent("車用音訊", value: "已連接")
+                    .font(.footnote)
+            }
         } header: {
             Text("開車模式")
         } footer: {

@@ -99,6 +99,33 @@ private struct ActivityProgress: View {
 /// 背景更新被系統暫停時的說明
 private let staleMessage = "鎖定畫面暫停更新 · 打開 App 或看小工具"
 
+/// 目前句（間奏時改成系統自己推進的倒數）
+private struct CurrentLineView: View {
+    let state: LyricsActivityAttributes.ContentState
+    let font: Font
+    let isStale: Bool
+    var lineLimit: Int = 2
+
+    var body: some View {
+        Group {
+            if let countdown = state.countdownInterval(from: Date()) {
+                HStack(spacing: 4) {
+                    Text("♪ 下一句")
+                    Text(timerInterval: countdown, countsDown: true)
+                        .monospacedDigit()
+                }
+                .lineLimit(1)
+            } else {
+                Text(state.currentLine)
+                    .lineLimit(lineLimit)
+                    .minimumScaleFactor(0.7)
+            }
+        }
+        .font(font)
+        .foregroundStyle(isStale ? Color.secondary : Color.primary)
+    }
+}
+
 /// 動態島展開區：目前句 + 下一句
 private struct ExpandedLyrics: View {
     let state: LyricsActivityAttributes.ContentState
@@ -106,12 +133,8 @@ private struct ExpandedLyrics: View {
 
     var body: some View {
         VStack(spacing: 4) {
-            Text(state.currentLine)
-                .font(.system(.title3, design: .rounded, weight: .bold))
-                .lineLimit(2)
-                .minimumScaleFactor(0.8)
+            CurrentLineView(state: state, font: .system(.title3, design: .rounded, weight: .bold), isStale: isStale)
                 .multilineTextAlignment(.center)
-                .foregroundStyle(isStale ? Color.secondary : Color.primary)
             if isStale {
                 Text(staleMessage)
                     .font(.caption)
@@ -155,11 +178,7 @@ private struct SmallActivityView: View {
         VStack(alignment: .leading, spacing: 3) {
             ActivityProgress(state: state)
                 .frame(height: 4)
-            Text(state.currentLine)
-                .font(.system(size: 22, weight: .bold, design: .rounded))
-                .lineLimit(2)
-                .minimumScaleFactor(0.65)
-                .foregroundStyle(isStale ? Color.secondary : Color.primary)
+            CurrentLineView(state: state, font: .system(size: 22, weight: .bold, design: .rounded), isStale: isStale)
             Spacer(minLength: 0)
             if isStale {
                 Label("未更新", systemImage: "exclamationmark.triangle.fill")
@@ -194,11 +213,7 @@ private struct LockScreenActivityView: View {
             ActivityArtwork(file: state.artworkFile, isPlaying: state.isPlaying, size: 44)
             VStack(alignment: .leading, spacing: 6) {
                 header
-                Text(state.currentLine)
-                    .font(.system(.title2, design: .rounded, weight: .bold))
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.7)
-                    .foregroundStyle(isStale ? Color.secondary : Color.primary)
+                CurrentLineView(state: state, font: .system(.title2, design: .rounded, weight: .bold), isStale: isStale)
                 if isStale {
                     Text(staleMessage)
                         .font(.caption.weight(.medium))

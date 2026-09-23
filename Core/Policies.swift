@@ -56,20 +56,35 @@ struct PollPolicy: Equatable, Sendable {
 // MARK: - 閒置省電
 
 struct IdlePolicy: Equatable, Sendable {
-    enum Kind: Equatable, Sendable { case paused, nothing }
+    enum Kind: Equatable, Sendable {
+        case paused
+        case nothing
+        /// 廣告 / Podcast 播放中
+        case nonMusic
+    }
 
     /// 沒有播放中的歌曲：10 分鐘
     var nothingLimit: TimeInterval = 600
     /// 暫停中（例如開車講電話，講完 Spotify 會自動續播）：30 分鐘
     var pausedLimit: TimeInterval = 1800
+    /// 廣告 / Podcast 播放中：60 分鐘（人還在聽，只是沒有歌詞）
+    var nonMusicLimit: TimeInterval = 3600
+    /// 連著車用音訊（CarPlay / 車用藍牙）時放寬幾倍：人還在車上
+    var carMultiplier: Double = 3
 
-    func limit(for kind: Kind) -> TimeInterval {
-        kind == .paused ? pausedLimit : nothingLimit
+    func limit(for kind: Kind, carConnected: Bool = false) -> TimeInterval {
+        let base: TimeInterval
+        switch kind {
+        case .paused: base = pausedLimit
+        case .nothing: base = nothingLimit
+        case .nonMusic: base = nonMusicLimit
+        }
+        return carConnected ? base * carMultiplier : base
     }
 
     /// 前景時永遠不停（Live Activity 之後進背景就無法再開始）
-    func shouldStop(kind: Kind, since: Date, now: Date, isForeground: Bool) -> Bool {
-        !isForeground && now.timeIntervalSince(since) > limit(for: kind)
+    func shouldStop(kind: Kind, since: Date, now: Date, isForeground: Bool, carConnected: Bool = false) -> Bool {
+        !isForeground && now.timeIntervalSince(since) > limit(for: kind, carConnected: carConnected)
     }
 }
 

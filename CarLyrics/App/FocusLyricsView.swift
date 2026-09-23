@@ -59,11 +59,14 @@ struct FocusLyricsView: View {
         // 專注模式是放在車架上看的：螢幕不自動關閉、允許橫向
         .onAppear {
             model.focusModeActive = true
-            AppDelegate.allowsLandscape = true
+            AppDelegate.orientation = model.focusLandscapeLock ? .landscapeOnly : .any
         }
         .onDisappear {
             model.focusModeActive = false
-            AppDelegate.allowsLandscape = false
+            AppDelegate.orientation = .portrait
+        }
+        .onChange(of: model.focusLandscapeLock) { _, locked in
+            AppDelegate.orientation = locked ? .landscapeOnly : .any
         }
     }
 
@@ -92,6 +95,17 @@ private struct FocusHeader: View {
             }
             .accessibilityElement(children: .combine)
             Spacer()
+            Button {
+                model.focusLandscapeLock.toggle()
+            } label: {
+                Image(systemName: model.focusLandscapeLock ? "lock.rotation" : "rectangle.landscape.rotate")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(model.focusLandscapeLock ? Color.orange : Color.white.opacity(0.7))
+                    .frame(width: 56, height: 56)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(model.focusLandscapeLock ? "取消鎖定橫向" : "鎖定橫向")
             Button {
                 withAnimation(.snappy) { showFontSlider.toggle() }
             } label: {

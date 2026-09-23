@@ -9,6 +9,9 @@ final class Preferences {
         static let keepScreenOn = "keepScreenOn"
         static let hasSeenSetup = "hasSeenSetup"
         static let focusFontScale = "focusFontScale"
+        static let focusLandscapeLock = "focusLandscapeLock"
+        static let autoFocusInCar = "autoFocusInCar"
+        static let pendingScreen = "pendingScreen"
         static let lastHeartbeat = "lastHeartbeat"
         static let lastHeartbeatInBackground = "lastHeartbeatInBackground"
     }
@@ -55,6 +58,27 @@ final class Preferences {
             return v == 0 ? 1 : min(1.4, max(0.8, v))
         }
         set { defaults.set(min(1.4, max(0.8, newValue)), forKey: Key.focusFontScale) }
+    }
+
+    /// 專注模式鎖定橫向（車架橫放時，系統方向鎖定也擋不住）
+    var focusLandscapeLock: Bool {
+        get { bool(Key.focusLandscapeLock, default: false) }
+        set { defaults.set(newValue, forKey: Key.focusLandscapeLock) }
+    }
+
+    /// 連上車用音訊時自動進入專注模式
+    var autoFocusInCar: Bool {
+        get { bool(Key.autoFocusInCar, default: true) }
+        set { defaults.set(newValue, forKey: Key.autoFocusInCar) }
+    }
+
+    /// 控制中心 / 捷徑要求開啟的畫面（App 還沒啟動時先寫在這裡）
+    var pendingScreen: String? {
+        get { defaults.string(forKey: Key.pendingScreen) }
+        set {
+            if let newValue { defaults.set(newValue, forKey: Key.pendingScreen) }
+            else { defaults.removeObject(forKey: Key.pendingScreen) }
+        }
     }
 
     /// 上一次輪詢的時間與當時是否在背景（偵測 App 被系統終止）

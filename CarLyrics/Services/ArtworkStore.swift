@@ -18,7 +18,11 @@ actor ArtworkStore {
         let name = Self.fileName(for: trackID)
         guard let dir = SharedArtwork.directory else { return nil }
         let fileURL = dir.appendingPathComponent(name)
-        if FileManager.default.fileExists(atPath: fileURL.path) { return name }
+        if FileManager.default.fileExists(atPath: fileURL.path) {
+            // 常聽的歌不要因為 mtime 老舊而先被清掉
+            try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: fileURL.path)
+            return name
+        }
         guard let url else { return nil }
         if let running = inFlight[trackID] { return await running.value }
 
@@ -40,7 +44,7 @@ actor ArtworkStore {
         inFlight[trackID] = task
         let result = await task.value
         inFlight[trackID] = nil
-        prune(dir)
+        prune(dir, keeping: name)
         return result
     }
 
@@ -55,10 +59,12 @@ actor ArtworkStore {
         return UIImage(cgImage: cg).jpegData(compressionQuality: 0.8)
     }
 
-    private func prune(_ dir: URL) {
+    private func prune(_ dir: URL, keeping current: String) {
         let fm = FileManager.default
-        guard let files = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey]),
-              files.count > maxFiles else { return }
+        guard let all = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey]),
+              all.count > maxFiles else { return }
+        // 正在顯示的那張永遠不刪
+        let files = all.filter { $0.lastPathComponent != current }
         let sorted = files.sorted {
             let a = (try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
             let b = (try? $1.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast

@@ -34,13 +34,17 @@ final class LiveActivityManager {
     private(set) var acceptedCount = 0
     private(set) var rejectedCount = 0
     private(set) var lastRejectedAt: Date?
+    /// 最近一次判定「沒有被套用」時，是哪個欄位不同（診斷用）
+    private(set) var lastMismatchField: String?
+    /// 背景被擋期間累積、還沒送出的內容
+    private var hasUnsentState = false
     /// 背景更新被系統擋掉（回前景時清除）
     private(set) var backgroundBlocked = false
     private var backgroundRejectStreak = 0
     private var loggedRejectionStreak = false
 
     /// 超過這個秒數沒更新，系統會把即時動態標成 stale
-    private static let staleAfter: TimeInterval = 90
+    private static let staleAfter: TimeInterval = 120
     /// 內容沒變時，每隔這麼久重送一次（延長 staleDate）
     var keepAliveInterval: TimeInterval = 45
     /// iOS 8 小時上限前 30 分鐘，在前景時自動換新
@@ -105,6 +109,7 @@ final class LiveActivityManager {
         if backgroundBlocked && priority == .routine && isInBackground {
             // 被擋就不白做工；記住最新內容，回前景或下一次重要更新時送出
             lastState = state
+            hasUnsentState = true
             return
         }
         send(state, to: activity)
@@ -118,9 +123,9 @@ final class LiveActivityManager {
         send(lastState, to: activity)
     }
 
-    /// 回到前景時把最新內容送出（背景被擋期間累積的）
+    /// 回到前景時把最新內容送出（只在背景被擋期間累積過內容時）
     func flush() {
-        guard isActive, let activity, let lastState else { return }
+        guard hasUnsentState, isActive, let activity, let lastState else { return }
         send(lastState, to: activity)
     }
 
@@ -142,6 +147,7 @@ final class LiveActivityManager {
 
     private func send(_ state: State, to activity: Activity<LyricsActivityAttributes>) {
         lastState = state
+        hasUnsentState = false
         updateCount += 1
         lastUpdateAt = Date()
         let content = ActivityContent(state: state, staleDate: Date().addingTimeInterval(Self.staleAfter))
@@ -156,7 +162,8 @@ final class LiveActivityManager {
     /// 比對系統裡的內容，確認更新有沒有真的被套用（只記錄次數，不記錄歌詞）
     private func verify(_ state: State, on activity: Activity<LyricsActivityAttributes>) {
         let background = isInBackground
-        if activity.content.state == state {
+        let mismatch = activity.content.state.model.mismatchField(comparedTo: state.model)
+        if mismatch == nil {
             acceptedCount += 1
             backgroundRejectStreak = 0
             if backgroundBlocked {
@@ -170,6 +177,7 @@ final class LiveActivityManager {
         } else {
             rejectedCount += 1
             lastRejectedAt = Date()
+            lastMismatchField = mismatch
             if background {
                 backgroundRejectStreak += 1
                 if backgroundRejectStreak >= 5 && !backgroundBlocked {
@@ -223,8 +231,8 @@ final class LiveActivityManager {
                     if self.activity?.id == a.id {
                         self.activity = nil
                         self.lastState = nil
-                        // 背景時無法重新開始，等回到前景
-                        self.startBlockedUntilForeground = true
+                        // 背景時無法重新開始，等回到前景；前景則可以立刻換新
+                        self.startBlockedUntilForeground = self.isInBackground
                     }
                 }
             }

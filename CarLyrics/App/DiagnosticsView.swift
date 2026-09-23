@@ -75,6 +75,7 @@ struct DiagnosticsView: View {
             }
             LabeledContent("即時動態權限", value: model.activitiesEnabled ? "已允許" : "未允許")
             LabeledContent("耗電狀態", value: model.power.description)
+            LabeledContent("車用音訊", value: model.isCarConnected ? "已連接" : "未連接")
         }
     }
 
@@ -108,6 +109,9 @@ struct DiagnosticsView: View {
             LabeledContent("系統套用 / 被擋", value: "\(model.liveActivity.acceptedCount) / \(model.liveActivity.rejectedCount)")
             if let at = model.liveActivity.lastRejectedAt {
                 LabeledContent("最近被擋", value: at.formatted(date: .omitted, time: .standard))
+            }
+            if let field = model.liveActivity.lastMismatchField {
+                LabeledContent("最近不同的欄位", value: field).font(.caption)
             }
             if let at = model.liveActivity.lastUpdateAt {
                 LabeledContent("最後更新", value: at.formatted(date: .omitted, time: .standard))

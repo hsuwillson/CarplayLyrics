@@ -85,11 +85,22 @@ struct LyricsWidgetView: View {
             // CarPlay 小工具頁 / 主畫面：大字、最多三行
             VStack(alignment: .leading, spacing: 5) {
                 header
-                Text(entry.frame.current)
+                if let countdown = entry.frame.countdownInterval(from: entry.date) {
+                    // 間奏：由系統自己倒數，不需要任何更新
+                    HStack(spacing: 4) {
+                        Text("♪ 下一句")
+                        Text(timerInterval: countdown, countsDown: true)
+                            .monospacedDigit()
+                    }
                     .font(.system(.title3, design: .rounded, weight: .bold))
-                    .lineLimit(entry.mode == .paragraph ? 2 : 3)
-                    .minimumScaleFactor(0.6)
-                    .contentTransition(.opacity)
+                    .lineLimit(1)
+                } else {
+                    Text(entry.frame.current)
+                        .font(.system(.title3, design: .rounded, weight: .bold))
+                        .lineLimit(entry.mode == .paragraph ? 2 : 3)
+                        .minimumScaleFactor(0.6)
+                        .contentTransition(.opacity)
+                }
                 Spacer(minLength: 0)
                 ForEach(Array(entry.frame.upcoming.enumerated()), id: \.offset) { i, line in
                     Text(line)

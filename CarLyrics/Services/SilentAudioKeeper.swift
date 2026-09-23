@@ -29,6 +29,23 @@ final class SilentAudioKeeper {
     private static let retryInterval: TimeInterval = 20
     /// 中斷結束時通知 AppModel（重新計算閒置時間）
     var onInterruptionEnded: (() -> Void)?
+    /// 接上 / 離開車用音訊（CarPlay、車用藍牙）
+    var onCarConnectionChanged: ((Bool) -> Void)?
+
+    /// 目前的輸出是不是車上的音響
+    private(set) var isCarConnected = SilentAudioKeeper.detectCar()
+
+    static func detectCar() -> Bool {
+        AVAudioSession.sharedInstance().currentRoute.outputs.contains { $0.portType == .carAudio }
+    }
+
+    private func updateCarConnection() {
+        let car = Self.detectCar()
+        guard car != isCarConnected else { return }
+        isCarConnected = car
+        debugLog(car ? "車用音訊：已連接" : "車用音訊：已離開")
+        onCarConnectionChanged?(car)
+    }
 
     private var observers: [NSObjectProtocol] = []
     private var engineObserver: NSObjectProtocol?
@@ -53,6 +70,7 @@ final class SilentAudioKeeper {
             MainActor.assumeIsolated {
                 let reason = (note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt) ?? 0
                 debugLog("音訊路由改變（reason \(reason)）")
+                self?.updateCarConnection()
                 self?.ensureRunning()
             }
         })

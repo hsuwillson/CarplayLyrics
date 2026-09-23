@@ -7,6 +7,8 @@ import WidgetKit
 @MainActor
 final class WidgetTimelinePublisher {
     private var lastSnapshot: LyricsTimelineSnapshot?
+    private var pending: LyricsTimelineSnapshot?
+    private var pendingTask: Task<Void, Never>?
     private(set) var policy = WidgetReloadPolicy()
     private(set) var requestCount = 0
     private(set) var lastRequestAt: Date?
@@ -29,16 +31,45 @@ final class WidgetTimelinePublisher {
         }
     }
 
-    /// 寫入新的時間軸；內容和上次相同就不重新整理
-    func publish(_ snapshot: LyricsTimelineSnapshot) {
+    /// 寫入新的時間軸；內容和上次相同就不重新整理。
+    /// `debounce` = true 時把換歌前後幾次連續更新（搜尋中 → 歌詞 → 封面）合併成一次。
+    func publish(_ snapshot: LyricsTimelineSnapshot, debounce: Bool = false) {
         var snapshot = snapshot
         snapshot.mode = mode
         if let last = lastSnapshot, last.isSameTimeline(as: snapshot) { return }
-        lastSnapshot = snapshot
+        guard debounce else {
+            pendingTask?.cancel()
+            pendingTask = nil
+            write(snapshot, reloadSystem: true)
+            return
+        }
+        pending = snapshot
+        guard pendingTask == nil else { return }
+        pendingTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(700))
+            guard let self, !Task.isCancelled, let snapshot = self.pending else { return }
+            self.pending = nil
+            self.pendingTask = nil
+            if let last = self.lastSnapshot, last.isSameTimeline(as: snapshot) { return }
+            self.write(snapshot, reloadSystem: true)
+        }
+    }
+
+    /// 只有起點漂移（歌詞、狀態都沒變）→ 重寫檔案讓小工具下次讀到正確時間，不佔用重新整理額度
+    func refreshFile(_ snapshot: LyricsTimelineSnapshot) {
+        var snapshot = snapshot
+        snapshot.mode = mode
+        guard let last = lastSnapshot, snapshot.needsFileRefresh(comparedTo: last) else { return }
+        write(snapshot, reloadSystem: false)
+    }
+
+    private func write(_ snapshot: LyricsTimelineSnapshot, reloadSystem: Bool) {
         guard LyricsTimelineStore.save(snapshot) else {
             debugLog("小工具時間軸寫入失敗（App Group 無法使用）")
             return
         }
+        lastSnapshot = snapshot
+        guard reloadSystem else { return }
         policy.recordImportant(now: Date())
         reload()
     }
