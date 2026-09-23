@@ -61,6 +61,7 @@ struct DiagnosticsView: View {
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
+            .controlSize(.large)
         } footer: {
             Text("會附上目前所有狀態與完整紀錄（含歌名／歌手與歌詞搜尋，不含帳號或密碼）。出問題時先別關 App，直接按這裡。")
         }
@@ -300,8 +301,8 @@ private struct DiagRow: View {
     }
 
     var body: some View {
-        HStack(spacing: 10) {
-            StatusDot(color: ok ? .green : .orange)
+        HStack(spacing: Theme.Spacing.m) {
+            StatusDot(color: ok ? Theme.Semantic.ok : Theme.Semantic.attention)
             Text(title)
             Spacer()
             Text(value)

@@ -64,7 +64,8 @@ struct AppNotice: Equatable, Identifiable {
     }
 }
 
-/// 可收合的提示橫幅：圖示 + 標題 + 說明 + 一顆動作按鈕
+/// 可收合的提示橫幅：圖示 + 標題 + 說明 + 一顆動作按鈕。
+/// 需要處理的用橘色圖示與細邊框；暫時性問題用灰色。底是淡淡的填色（不是玻璃：玻璃留給按鈕）
 struct NoticeBanner: View {
     let notice: AppNotice
     let perform: (AppNotice.Action) -> Void
@@ -75,12 +76,14 @@ struct NoticeBanner: View {
         self.perform = perform
     }
 
+    private var tint: Color { notice.needsAttention ? Theme.Semantic.attention : Color.secondary }
+
     var body: some View {
         if dismissedID != notice.id {
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .top, spacing: Theme.Spacing.m) {
                 Image(systemName: notice.symbol)
-                    .font(.title3)
-                    .foregroundStyle(notice.needsAttention ? Color.orange : Color.secondary)
+                    .font(.title3.weight(.medium))
+                    .foregroundStyle(tint)
                     .frame(width: 28)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
@@ -91,26 +94,34 @@ struct NoticeBanner: View {
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                Spacer(minLength: 4)
+                Spacer(minLength: Theme.Spacing.xs)
                 if let action = notice.action {
                     Button(action.title) { perform(action) }
                         .font(.caption.weight(.semibold))
                         .buttonStyle(.glass)
+                        .controlSize(.small)
                 } else {
                     Button {
-                        withAnimation(.snappy) { dismissedID = notice.id }
+                        withAnimation(Theme.Motion.snappy) { dismissedID = notice.id }
                     } label: {
                         Image(systemName: "xmark")
                             .font(.caption.weight(.bold))
                             .foregroundStyle(.secondary)
-                            .frame(width: 28, height: 28)
+                            .frame(width: 32, height: 32)
+                            .contentShape(Circle())
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("關閉提示")
                 }
             }
-            .padding(12)
-            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .padding(Theme.Spacing.m)
+            .background(.fill.quaternary, in: Theme.cardShape(Theme.Radius.control))
+            .overlay {
+                if notice.needsAttention {
+                    Theme.cardShape(Theme.Radius.control)
+                        .strokeBorder(Theme.Semantic.attention.opacity(0.35), lineWidth: 1)
+                }
+            }
             .accessibilityElement(children: .contain)
             .transition(.move(edge: .top).combined(with: .opacity))
         }

@@ -13,10 +13,12 @@ from PIL import Image, ImageDraw, ImageFilter
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ASSETS = os.path.join(ROOT, "CarLyrics", "Assets.xcassets")
 
-TOP = (58, 44, 140)       # 靛藍
-BOTTOM = (18, 16, 40)     # 深夜藍
-GREEN = (30, 215, 96)
+TOP = (92, 74, 214)       # 品牌靛藍（與 AccentColor 一致）
+BOTTOM = (16, 14, 38)     # 深夜藍
+GREEN = (52, 199, 89)     # 系統綠（播放中）
 WHITE = (255, 255, 255)
+# 幾何圖形先畫在 4 倍大再縮小：Pillow 本身不做反鋸齒
+SUPERSAMPLE = 4
 
 
 def gradient(size):
@@ -53,20 +55,31 @@ def draw_mark(draw, s, scale=1.0, ox=0, oy=0):
 
 
 def app_icon(size=1024):
-    img = gradient(size)
-    glow = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    big = size * SUPERSAMPLE
+    img = gradient(big).convert("RGBA")
+    # 左上角一團光暈（跟 App 主畫面的背景同一個語言）
+    glow = Image.new("RGBA", (big, big), (0, 0, 0, 0))
     gd = ImageDraw.Draw(glow)
-    gd.ellipse([size * 0.1, size * 0.05, size * 0.8, size * 0.6], fill=(120, 90, 255, 70))
-    glow = glow.filter(ImageFilter.GaussianBlur(size * 0.08))
-    img = Image.alpha_composite(img.convert("RGBA"), glow)
-    draw_mark(ImageDraw.Draw(img), size)
+    gd.ellipse([-big * 0.1, -big * 0.2, big * 0.75, big * 0.55], fill=(150, 130, 255, 90))
+    glow = glow.filter(ImageFilter.GaussianBlur(big * 0.10))
+    img = Image.alpha_composite(img, glow)
+    # 目前句底下一層柔光，讓最亮那一行更「亮」
+    halo = Image.new("RGBA", (big, big), (0, 0, 0, 0))
+    hd = ImageDraw.Draw(halo)
+    hd.rounded_rectangle([big * 0.17, big * 0.55, big * 0.83, big * 0.65], radius=big * 0.05,
+                         fill=(255, 255, 255, 60))
+    halo = halo.filter(ImageFilter.GaussianBlur(big * 0.03))
+    img = Image.alpha_composite(img, halo)
+    draw_mark(ImageDraw.Draw(img), big)
+    img = img.resize((size, size), Image.LANCZOS)
     return img.convert("RGB")  # App icon 不能有透明
 
 
 def launch_icon(size=240):
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    draw_mark(ImageDraw.Draw(img), size)
-    return img
+    big = size * SUPERSAMPLE
+    img = Image.new("RGBA", (big, big), (0, 0, 0, 0))
+    draw_mark(ImageDraw.Draw(img), big)
+    return img.resize((size, size), Image.LANCZOS)
 
 
 def write_json(path, obj):
@@ -117,7 +130,7 @@ def main():
     app_icon(180).save(os.path.join(altstore, "icon.png"))
 
     color_set("AccentColor", (88, 70, 210), (140, 125, 255))
-    color_set("LaunchBackground", (18, 16, 40), (18, 16, 40))
+    color_set("LaunchBackground", (16, 14, 38), (16, 14, 38))
     print("已產生", ASSETS)
 
 

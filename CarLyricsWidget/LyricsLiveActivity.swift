@@ -55,7 +55,7 @@ private struct PlayingIcon: View {
     var body: some View {
         Image(systemName: isPlaying ? "music.note" : "pause.fill")
             .font(.caption.weight(.semibold))
-            .foregroundStyle(isPlaying ? Color.green : Color.secondary)
+            .foregroundStyle(isPlaying ? WidgetTheme.Color.playing : WidgetTheme.Color.paused)
             .accessibilityLabel(isPlaying ? "播放中" : "已暫停")
     }
 }
@@ -87,7 +87,7 @@ private struct ActivityProgress: View {
 
     var body: some View {
         if let interval = state.playbackInterval {
-            TimerBar(interval: interval, tint: .green)
+            TimerBar(interval: interval, tint: WidgetTheme.Color.playing)
         }
     }
 }
@@ -202,10 +202,30 @@ private struct CurrentLineView: View {
                 Text(shown.current)
                     .lineLimit(lineLimit)
                     .minimumScaleFactor(0.7)
+                    .lineSpacing(WidgetTheme.lineSpacing)
             }
         }
         .font(font)
         .foregroundStyle(shown.isStale ? Color.secondary : Color.primary)
+    }
+}
+
+/// 過時提示：橘色圖示 + 灰字，一行（清楚但不吵：駕駛只需要知道「這不是即時的」）
+private struct StaleHintRow: View {
+    let hint: String
+    var font: Font = .caption.weight(.medium)
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(WidgetTheme.Color.stale)
+                .accessibilityHidden(true)
+            Text(hint)
+                .foregroundStyle(.secondary)
+        }
+        .font(font)
+        .lineLimit(1)
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -217,13 +237,10 @@ private struct ExpandedLyrics: View {
     var body: some View {
         let shown = ShownLyrics(state: state, isStale: isStale)
         VStack(spacing: 4) {
-            CurrentLineView(state: state, shown: shown, font: .system(.title3, design: .rounded, weight: .bold))
+            CurrentLineView(state: state, shown: shown, font: WidgetTheme.Font.islandCurrent)
                 .multilineTextAlignment(.center)
             if let hint = shown.staleHint {
-                Text(hint)
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                    .lineLimit(1)
+                StaleHintRow(hint: hint, font: .caption)
             } else if !shown.next.isEmpty {
                 Text(shown.next)
                     .font(.subheadline)
@@ -258,8 +275,8 @@ private struct LyricsActivityView: View {
 private struct UpcomingRow: View {
     let row: ShownRow
     let font: Font
-    var color: Color = .secondary
-    var barHeight: CGFloat = 2
+    var color: Color = WidgetTheme.Color.upcoming
+    var barHeight: CGFloat = WidgetTheme.Bar.upcoming
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -291,20 +308,18 @@ private struct SmallActivityView: View {
             layout(shown, rows: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .padding(10)
+        .padding(WidgetTheme.Spacing.carPadding)
     }
 
     private func layout(_ shown: ShownLyrics, rows: Int) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: WidgetTheme.Spacing.tight) {
             ActivityProgress(state: state)
-                .frame(height: 4)
-            CurrentLineView(state: state, shown: shown, font: .system(size: 22, weight: .bold, design: .rounded))
+                .frame(height: WidgetTheme.Bar.song)
+                .accessibilityHidden(true)
+            CurrentLineView(state: state, shown: shown, font: WidgetTheme.Font.carCurrent)
             if let hint = shown.staleHint {
-                // 一行橘色提示，讓駕駛一眼看出這不是即時的
-                Label(hint, systemImage: "exclamationmark.triangle.fill")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.orange)
-                    .lineLimit(1)
+                // 一行提示，讓駕駛一眼看出這不是即時的
+                StaleHintRow(hint: hint, font: WidgetTheme.Font.carHint)
             }
             ForEach(Array(shown.rows.prefix(rows).enumerated()), id: \.offset) { i, row in
                 HStack(alignment: .top, spacing: 5) {
@@ -312,9 +327,11 @@ private struct SmallActivityView: View {
                         Image(systemName: "pause.fill")
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
+                            .accessibilityLabel("已暫停")
                     }
-                    UpcomingRow(row: row, font: .system(size: 14),
-                                color: i == 0 ? Color.secondary : Color.secondary.opacity(0.7))
+                    UpcomingRow(row: row,
+                                font: i == 0 ? WidgetTheme.Font.carUpcoming : WidgetTheme.Font.carUpcomingFaded,
+                                color: i == 0 ? WidgetTheme.Color.upcoming : WidgetTheme.Color.upcomingFaded)
                 }
             }
         }
@@ -337,37 +354,45 @@ private struct LockScreenActivityView: View {
             layout(shown, rows: 0)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16)
+        .padding(WidgetTheme.Spacing.lockPadding)
+        // 卡片高度有限：字級跟隨系統到「特大」為止
+        .dynamicTypeSize(...WidgetTheme.maxDynamicType)
     }
 
     private func layout(_ shown: ShownLyrics, rows: Int) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: WidgetTheme.Spacing.row) {
             header
-            CurrentLineView(state: state, shown: shown, font: .system(.title, design: .rounded, weight: .heavy),
-                            lineLimit: 3)
+            CurrentLineView(state: state, shown: shown, font: WidgetTheme.Font.lockCurrent, lineLimit: 3)
             if !isStale {
                 // 細的逐句進度條：更新沒跟上時它會停在滿格，比文字更容易一眼看出
                 LineProgress(state: state)
-                    .frame(height: 3)
+                    .frame(height: WidgetTheme.Bar.line)
+                    .accessibilityHidden(true)
             }
             // 接下來最多三句，各帶一條系統推進的細進度條：鎖定後更新被擋，也看得出唱到哪一句
             ForEach(Array(shown.rows.prefix(rows).enumerated()), id: \.offset) { i, row in
-                UpcomingRow(row: row, font: i == 0 ? .headline : .subheadline,
-                            color: i == 0 ? Color.secondary : Color.secondary.opacity(0.6))
+                UpcomingRow(row: row,
+                            font: i == 0 ? WidgetTheme.Font.lockUpcoming : WidgetTheme.Font.lockUpcomingFaded,
+                            color: i == 0 ? WidgetTheme.Color.upcoming : WidgetTheme.Color.upcomingFaded)
             }
             if let hint = shown.staleHint {
-                Text(hint)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.orange)
-                    .lineLimit(1)
+                StaleHintRow(hint: hint)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// 一行小字：哪一首（暫停時顯示暫停符號）
+    /// 一行小字：小張封面（有的話）+ 哪一首（暫停時顯示暫停符號）
     private var header: some View {
         HStack(spacing: 6) {
+            if let image = SharedArtwork.image(named: state.artworkFile) {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 18, height: 18)
+                    .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                    .accessibilityHidden(true)
+            }
             PlayingIcon(isPlaying: state.isPlaying)
             Text(state.trackName)
                 .font(.caption2.weight(.semibold))
@@ -377,7 +402,8 @@ private struct LockScreenActivityView: View {
             if isStale {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.caption)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(WidgetTheme.Color.stale)
+                    .accessibilityLabel("歌詞未更新")
             }
         }
     }

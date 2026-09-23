@@ -13,7 +13,7 @@ struct ContentView: View {
 
 // MARK: - 主畫面
 
-/// 主畫面：漸層背景 + 狀態列 + 提示橫幅 + 正在播放 + 歌詞舞台 + 延遲調整 + 動作列
+/// 主畫面：光暈背景 + 狀態列 + 提示橫幅 + 正在播放 + 歌詞舞台 + 延遲調整 + 動作列
 private struct MainScreen: View {
     @Environment(AppModel.self) private var model
     @State private var showSettings = false
@@ -37,7 +37,10 @@ private struct MainScreen: View {
                     Image(systemName: "gearshape")
                         .overlay(alignment: .topTrailing) {
                             if model.setupNeedsAttention && model.auth.isLoggedIn {
-                                Circle().fill(Color.orange).frame(width: 8, height: 8).offset(x: 3, y: -3)
+                                Circle()
+                                    .fill(Theme.Semantic.attention)
+                                    .frame(width: 8, height: 8)
+                                    .offset(x: 3, y: -3)
                             }
                         }
                 }
@@ -88,6 +91,7 @@ private struct MainScreen: View {
                 ScrollView {
                     mainLayout
                 }
+                .scrollIndicators(.hidden)
             }
         } else {
             WelcomeView()
@@ -111,92 +115,136 @@ private struct MainScreen: View {
             OffsetControl()
             ActionRow(openPicker: { picker = PickerRequest(openImporter: false) }, showFocus: $showFocus)
         }
-        .padding(.horizontal, Theme.Spacing.xl)
+        .padding(.horizontal, Theme.Spacing.gutter)
         .padding(.top, Theme.Spacing.xs)
         .padding(.bottom, Theme.Spacing.m)
-        .animation(.snappy, value: model.notice)
+        .animation(Theme.Motion.snappy, value: model.notice)
         // 選擇 / 匯入歌詞成功：輕輕震一下
         .sensoryFeedback(.success, trigger: model.lyricsChosenCount)
     }
 }
 
-/// 開「換歌詞」時是否直接跳出檔案選擇器
+/// 開「選擇歌詞」時是否直接跳出檔案選擇器
 private struct PickerRequest: Identifiable {
     let id = UUID()
     let openImporter: Bool
 }
 
-/// 尚未登入
+// MARK: - 尚未登入
+
 private struct WelcomeView: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        VStack(spacing: Theme.Spacing.xl) {
-            Spacer()
-            Image(systemName: "music.note.list")
-                .font(.system(size: 56, weight: .light))
-                .foregroundStyle(Theme.brand)
-                .accessibilityHidden(true)
-            Text("CarLyrics")
-                .font(.largeTitle.bold())
-            Text("登入 Spotify 後，開車時就能在鎖定畫面與 CarPlay 看到同步歌詞。")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-            if let error = model.pollError {
-                Text("\(error.title)：\(error.message)")
-                    .font(.footnote)
-                    .foregroundStyle(.orange)
-                    .multilineTextAlignment(.center)
-            }
-            Button {
-                model.login()
-            } label: {
-                Group {
-                    if model.isLoggingIn {
-                        Label { Text("登入中…") } icon: { ProgressView() }
-                    } else {
-                        Label("登入 Spotify", systemImage: "person.crop.circle")
+        ScrollView {
+            VStack(spacing: Theme.Spacing.xxl) {
+                Spacer(minLength: Theme.Spacing.xxl)
+                VStack(spacing: Theme.Spacing.l) {
+                    Image(systemName: "music.note.list")
+                        .font(.system(size: 34, weight: .medium))
+                        .foregroundStyle(.white)
+                        .frame(width: 84, height: 84)
+                        .background(Theme.brand.gradient, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+                        .shadow(color: Theme.brand.opacity(0.35), radius: 16, y: 8)
+                        .accessibilityHidden(true)
+                    VStack(spacing: Theme.Spacing.s) {
+                        Text("CarLyrics")
+                            .font(.largeTitle.bold())
+                        Text("開車時，把 Spotify 正在唱的那一句\n放到 CarPlay 與鎖定畫面上。")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
                     }
                 }
-                .font(.headline)
-                .frame(maxWidth: .infinity, minHeight: 32)
+                VStack(alignment: .leading, spacing: Theme.Spacing.l) {
+                    FeatureRow(symbol: "car.fill", title: "CarPlay 儀表板",
+                               detail: "目前句 + 接下來兩句，一眼就看到")
+                    FeatureRow(symbol: "lock.iphone", title: "鎖定畫面",
+                               detail: "不用解鎖，歌詞自己換句")
+                    FeatureRow(symbol: "moon.fill", title: "專注模式",
+                               detail: "放在車架上：純黑背景、超大字")
+                }
+                .padding(Theme.Spacing.l)
+                .background(.fill.quaternary, in: Theme.cardShape())
+                if let error = model.pollError {
+                    Text("\(error.title)：\(error.message)")
+                        .font(.footnote)
+                        .foregroundStyle(Theme.Semantic.attention)
+                        .multilineTextAlignment(.center)
+                }
+                VStack(spacing: Theme.Spacing.m) {
+                    Button {
+                        model.login()
+                    } label: {
+                        Group {
+                            if model.isLoggingIn {
+                                Label { Text("登入中…") } icon: { ProgressView() }
+                            } else {
+                                Label("登入 Spotify", systemImage: "person.crop.circle")
+                            }
+                        }
+                        .font(.headline)
+                        .frame(maxWidth: .infinity, minHeight: 32)
+                    }
+                    .buttonStyle(.glassProminent)
+                    .tint(Theme.brand)
+                    .controlSize(.large)
+                    .disabled(model.isLoggingIn)
+                    Text("需要 Spotify Premium。登入資訊只存在這支 iPhone 的鑰匙圈，不會傳到其他地方。")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .multilineTextAlignment(.center)
+                }
             }
-            .buttonStyle(.glassProminent)
-            .tint(Theme.spotifyGreen)
-            .controlSize(.large)
-            .disabled(model.isLoggingIn)
-            Text("需要 Spotify Premium。登入資訊只存在這支 iPhone 的鑰匙圈，不會傳到其他地方。")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-                .multilineTextAlignment(.center)
-            Spacer()
-            Spacer()
+            .padding(.horizontal, Theme.Spacing.xxl)
+            .padding(.bottom, Theme.Spacing.xxl)
         }
-        .padding(32)
+        .scrollBounceBehavior(.basedOnSize)
     }
 }
 
-/// 最上面一行：連線狀態 + 歌詞狀態
+private struct FeatureRow: View {
+    let symbol: String
+    let title: String
+    let detail: String
+
+    var body: some View {
+        HStack(spacing: Theme.Spacing.m) {
+            Image(systemName: symbol)
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(Theme.brand)
+                .frame(width: 32)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                Text(detail)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+// MARK: - 狀態列
+
+/// 最上面一行：連線狀態籤（左）+ 歌詞狀態（右）
 private struct ConnectionStatusBar: View {
     @Environment(AppModel.self) private var model
 
     private var dotColor: Color {
-        if !model.isOnline { return .red }
+        if !model.isOnline { return Theme.Semantic.offline }
         switch model.session {
-        case .playing: return .green
-        case .paused, .nonMusic: return .yellow
-        default: return .gray
+        case .playing: return Theme.Semantic.playing
+        case .paused, .nonMusic: return Theme.Semantic.paused
+        default: return Theme.Semantic.idle
         }
     }
 
     var body: some View {
         HStack(spacing: Theme.Spacing.s) {
-            StatusDot(color: dotColor)
-            Text(model.isOnline ? model.session.label : "離線")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+            StatusChip(color: dotColor, text: model.isOnline ? model.session.label : "離線")
                 .layoutPriority(1)
             Spacer(minLength: Theme.Spacing.s)
             if model.nowPlaying != nil {
@@ -228,16 +276,7 @@ private struct LiveActivityHint: View {
     @ViewBuilder
     private var row: some View {
         if !model.liveActivity.isActive {
-            HStack(spacing: Theme.Spacing.s) {
-                Image(systemName: "lock.iphone")
-                    .foregroundStyle(.secondary)
-                    .accessibilityHidden(true)
-                Text(message)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.85)
-                Spacer(minLength: Theme.Spacing.s)
+            InlineHint(symbol: "lock.iphone", text: message, lineLimit: 2) {
                 if model.activitiesEnabled {
                     Button("現在顯示") { model.startLiveActivityNow() }
                         .accessibilityLabel("現在顯示鎖定畫面歌詞")
@@ -246,10 +285,6 @@ private struct LiveActivityHint: View {
                         .accessibilityLabel("開啟系統設定允許即時動態")
                 }
             }
-            .buttonStyle(.glass)
-            .controlSize(.small)
-            .font(.footnote.weight(.semibold))
-            .accessibilityElement(children: .contain)
         }
     }
 
@@ -269,23 +304,14 @@ private struct DrivingModeHint: View {
 
     var body: some View {
         if model.auth.isLoggedIn, let hint = model.drivingHint {
-            HStack(spacing: Theme.Spacing.s) {
-                Image(systemName: model.isDrivingModeActive ? "car.fill" : "exclamationmark.triangle")
-                    .foregroundStyle(model.isDrivingModeActive ? Color.green : Color.orange)
-                    .accessibilityHidden(true)
-                Text(hint)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(3)
-                    .minimumScaleFactor(0.85)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityElement(children: .combine)
+            InlineHint(symbol: model.isDrivingModeActive ? "car.fill" : "exclamationmark.triangle.fill",
+                       tint: model.isDrivingModeActive ? Theme.Semantic.playing : Theme.Semantic.attention,
+                       text: hint)
         }
     }
 }
 
-// MARK: 正在播放
+// MARK: - 正在播放
 
 private struct NowPlayingHero: View {
     @Environment(AppModel.self) private var model
@@ -295,7 +321,7 @@ private struct NowPlayingHero: View {
             // 廣告 / Podcast 時不顯示上一首歌的資訊（IdleHero 會顯示「廣告播放中」）
             if let np = model.nowPlaying, !model.session.isNonMusic {
                 HStack(spacing: Theme.Spacing.l) {
-                    ArtworkView(url: np.artworkURL, size: 72, cornerRadius: 12)
+                    ArtworkView(url: np.artworkURL, size: Theme.Size.artworkHero)
                     TrackTitle(title: np.title, artist: np.artist, album: np.album)
                 }
                 ProgressStrip(duration: np.duration, isPlaying: np.isPlaying)
@@ -320,7 +346,7 @@ private struct TrackTitle: View {
                 .lineLimit(2)
                 .minimumScaleFactor(0.75)
             Text(artist)
-                .font(.subheadline)
+                .font(.subheadline.weight(.medium))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
             if !album.isEmpty {
@@ -344,7 +370,7 @@ private struct ProgressStrip: View {
     var body: some View {
         TimelineView(.periodic(from: .now, by: isPlaying ? 0.5 : 60)) { _ in
             let position = min(model.livePosition(), duration)
-            VStack(spacing: 4) {
+            VStack(spacing: Theme.Spacing.xs) {
                 ProgressView(value: position, total: max(duration, 1))
                     .tint(Color.primary)
                 HStack {
@@ -368,7 +394,7 @@ private struct TransportControls: View {
     let isPlaying: Bool
 
     var body: some View {
-        HStack(spacing: 28) {
+        HStack(spacing: Theme.Spacing.xxl) {
             TransportButton(symbol: "backward.fill") { model.previousOrRestart() }
                 .accessibilityLabel("上一首")
             PlayPauseButton(isPlaying: isPlaying) {
@@ -379,7 +405,7 @@ private struct TransportControls: View {
         }
         .sensoryFeedback(.impact(weight: .medium), trigger: model.controlSuccessCount)
         .sensoryFeedback(.error, trigger: model.controlFailureCount)
-        .opacity(model.canControlPlayback ? 1 : 0.5)
+        .opacity(model.canControlPlayback ? 1 : Theme.Opacity.dimmed)
     }
 }
 
@@ -387,46 +413,47 @@ private struct IdleHero: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: Theme.Spacing.s) {
             switch model.session {
             case .connecting:
                 ProgressView()
+                    .controlSize(.regular)
                 Text("連接 Spotify 中…")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             case .nonMusic(let kind):
                 Text(kind.label)
-                    .font(.title3.weight(.semibold))
+                    .font(Theme.Font.emptyTitle)
                 Text("歌曲開始後會自動顯示歌詞")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             default:
                 Text("沒有正在播放的歌曲")
-                    .font(.title3.weight(.semibold))
+                    .font(Theme.Font.emptyTitle)
                 Text("在 Spotify 開始播放後會自動出現")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
         }
+        .multilineTextAlignment(.center)
         .frame(maxWidth: .infinity, minHeight: 120)
     }
 }
 
-// MARK: 歌詞舞台
+// MARK: - 歌詞舞台
 
 private struct LyricsStage: View {
     @Environment(AppModel.self) private var model
     @Environment(\.openURL) private var openURL
-    /// 開啟「換歌詞」（參數：是否直接匯入檔案）
+    /// 開啟「選擇歌詞」（參數：是否直接匯入檔案）
     let openPicker: (Bool) -> Void
 
     var body: some View {
         Group {
             if model.session.isNonMusic {
-                EmptyHint(symbol: "megaphone", text: "廣告 / Podcast 沒有歌詞\n結束後會自動接上")
+                EmptyStateView(symbol: "megaphone", title: "廣告 / Podcast 沒有歌詞", message: "結束後會自動接上")
             } else if model.nowPlaying == nil {
-                VStack(spacing: Theme.Spacing.m) {
-                    EmptyHint(symbol: "music.note", text: "在 Spotify 播歌後，歌詞會自動出現")
+                EmptyStateView(symbol: "music.note", title: "在 Spotify 播歌", message: "歌詞會自動出現") {
                     Button {
                         if let url = URL(string: "spotify:") { openURL(url) }
                     } label: {
@@ -443,13 +470,16 @@ private struct LyricsStage: View {
                 case .searching, .idle:
                     VStack(spacing: Theme.Spacing.m) {
                         ProgressView()
-                        Text("正在為《\(model.nowPlaying?.title ?? "")》找歌詞…")
+                        Text("正在找《\(model.nowPlaying?.title ?? "")》的歌詞…")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .lineLimit(2)
                     }
+                    .frame(maxWidth: .infinity)
                 case .notFound:
-                    VStack(spacing: Theme.Spacing.m) {
-                        EmptyHint(symbol: "text.magnifyingglass", text: "找不到這首歌的歌詞")
+                    EmptyStateView(symbol: "text.magnifyingglass", title: "找不到這首歌的歌詞",
+                                   message: "可以搜尋其他版本，或匯入自己的 LRC 檔") {
                         HStack(spacing: Theme.Spacing.s) {
                             Button("搜尋其他版本") { openPicker(false) }
                             Button("匯入 LRC 檔") { openPicker(true) }
@@ -457,39 +487,20 @@ private struct LyricsStage: View {
                         .buttonStyle(.glass)
                     }
                 case .failed(let error):
-                    VStack(spacing: Theme.Spacing.m) {
-                        EmptyHint(symbol: "exclamationmark.icloud", text: "\(error.title)\n\(error.message)")
+                    EmptyStateView(symbol: "exclamationmark.icloud", title: error.title, message: error.message) {
                         Button("重試") { model.lyrics.retry() }
                             .buttonStyle(.glass)
                     }
                 case .instrumental:
-                    EmptyHint(symbol: "music.quarternote.3", text: "純音樂，沒有歌詞")
+                    EmptyStateView(symbol: "music.quarternote.3", title: "純音樂", message: "這首歌沒有歌詞")
                 }
             }
         }
-        .animation(.easeInOut(duration: 0.25), value: model.lyrics.state.label)
+        .animation(Theme.Motion.standard, value: model.lyrics.state.label)
     }
 }
 
-private struct EmptyHint: View {
-    let symbol: String
-    let text: String
-
-    var body: some View {
-        VStack(spacing: 10) {
-            Image(systemName: symbol)
-                .font(.system(size: 36, weight: .light))
-                .foregroundStyle(.tertiary)
-                .accessibilityHidden(true)
-            Text(text)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        }
-        .multilineTextAlignment(.center)
-        .frame(maxWidth: .infinity)
-    }
-}
-
+/// 卡拉 OK 式三句：上一句（淡）、目前句（大字）、下一句（次要）
 private struct SyncedLyricsStage: View {
     @Environment(AppModel.self) private var model
 
@@ -499,19 +510,20 @@ private struct SyncedLyricsStage: View {
     }
 
     var body: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: Theme.Spacing.l) {
             Spacer(minLength: 0)
             Text(previousLine)
-                .font(.title3)
-                .foregroundStyle(Color.secondary.opacity(0.7))
+                .font(Theme.Font.lyricContext)
+                .foregroundStyle(.tertiary)
                 .lineLimit(1)
                 .accessibilityHidden(true)
             AnimatedCurrentLine(
                 text: model.lyricsDisplay.current.isEmpty ? "♪" : model.lyricsDisplay.current,
                 index: model.lyricsDisplay.index,
-                font: .system(.largeTitle, design: .rounded, weight: .bold))
+                font: Theme.Font.lyricHero,
+                lineSpacing: 6)
             Text(model.lyricsDisplay.next.isEmpty ? " " : model.lyricsDisplay.next)
-                .font(.title3.weight(.medium))
+                .font(Theme.Font.lyricContext)
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
                 .accessibilityLabel("下一句：\(model.lyricsDisplay.next)")
@@ -533,15 +545,17 @@ private struct PlainLyricsStage: View {
             ScrollView {
                 Text(text)
                     .font(.title3)
+                    .lineSpacing(4)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .scrollIndicators(.hidden)
         }
         .padding(Theme.Spacing.l)
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+        .background(.fill.quaternary, in: Theme.cardShape())
     }
 }
 
-// MARK: 延遲調整（精簡版；完整版在設定）
+// MARK: - 延遲調整（精簡版；完整版在設定）
 
 private struct OffsetControl: View {
     @Environment(AppModel.self) private var model
@@ -553,6 +567,7 @@ private struct OffsetControl: View {
 
     private var usePerSong: Bool { perSong && model.nowPlaying != nil }
     private var value: TimeInterval { usePerSong ? model.trackOffset : model.globalOffset }
+    private var isDisabled: Bool { model.nowPlaying != nil && !model.hasSyncedLyrics }
 
     var body: some View {
         HStack(spacing: Theme.Spacing.s) {
@@ -562,7 +577,7 @@ private struct OffsetControl: View {
                 Text(String(format: "%+.2f 秒", value))
                     .font(.headline.monospacedDigit())
                     .contentTransition(.numericText(value: value))
-                    .animation(.snappy, value: value)
+                    .animation(Theme.Motion.snappy, value: value)
                 Text(usePerSong ? "只調「\(model.nowPlaying?.title ?? "")」" : "歌詞提前（全部）")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
@@ -587,8 +602,8 @@ private struct OffsetControl: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .glassEffect(.regular, in: Capsule())
-        .disabled(model.nowPlaying != nil && !model.hasSyncedLyrics)
-        .opacity(model.nowPlaying != nil && !model.hasSyncedLyrics ? 0.5 : 1)
+        .disabled(isDisabled)
+        .opacity(isDisabled ? Theme.Opacity.dimmed : 1)
         .sensoryFeedback(.selection, trigger: value)
         .sensoryFeedback(.warning, trigger: hitLimit)
     }
@@ -615,14 +630,14 @@ private struct StepButton: View {
             Image(systemName: symbol)
                 .font(.system(size: 17, weight: .bold))
                 .foregroundStyle(Color.primary)
-                .frame(width: 44, height: 44)
+                .frame(width: Theme.Size.tapTarget, height: Theme.Size.tapTarget)
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
     }
 }
 
-// MARK: 動作列
+// MARK: - 動作列
 
 private struct ActionRow: View {
     @Environment(AppModel.self) private var model
@@ -641,7 +656,7 @@ private struct ActionRow: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(!model.hasSyncedLyrics)
-                .opacity(model.hasSyncedLyrics ? 1 : 0.4)
+                .opacity(model.hasSyncedLyrics ? 1 : Theme.Opacity.disabled)
 
                 Button {
                     showFocus = true
@@ -650,14 +665,14 @@ private struct ActionRow: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(!hasSong)
-                .opacity(hasSong ? 1 : 0.4)
+                .opacity(hasSong ? 1 : Theme.Opacity.disabled)
 
                 Button(action: openPicker) {
                     ActionLabel(title: "選擇歌詞", symbol: "arrow.triangle.2.circlepath")
                 }
                 .buttonStyle(.plain)
                 .disabled(!hasSong)
-                .opacity(hasSong ? 1 : 0.4)
+                .opacity(hasSong ? 1 : Theme.Opacity.disabled)
             }
         }
     }

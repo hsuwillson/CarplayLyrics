@@ -77,6 +77,7 @@ struct LyricsWidgetView: View {
                     .font(.headline)
                     .lineLimit(2)
                     .minimumScaleFactor(0.7)
+                    .widgetAccentable()
                 if !entry.frame.next.isEmpty {
                     Text(entry.frame.next)
                         .font(.caption)
@@ -113,7 +114,7 @@ struct LyricsWidgetView: View {
             ForEach(Array(entry.frame.upcoming.enumerated()), id: \.offset) { i, line in
                 Text(line)
                     .font(.caption)
-                    .foregroundStyle(i == 0 ? Color.secondary : Color.secondary.opacity(0.6))
+                    .foregroundStyle(i == 0 ? WidgetTheme.Color.upcoming : WidgetTheme.Color.upcomingFaded)
                     .lineLimit(2)
             }
             progress
@@ -146,11 +147,12 @@ struct LyricsWidgetView: View {
                 Text(timerInterval: countdown, countsDown: true)
                     .monospacedDigit()
             }
-            .font(.system(.title3, design: .rounded, weight: .bold))
+            .font(WidgetTheme.Font.widgetCurrent)
             .lineLimit(1)
         } else {
             Text(entry.frame.current)
-                .font(.system(.title3, design: .rounded, weight: .bold))
+                .font(WidgetTheme.Font.widgetCurrent)
+                .lineSpacing(WidgetTheme.lineSpacing)
                 .lineLimit(lineLimit)
                 .minimumScaleFactor(minimumScale)
                 .contentTransition(.opacity)
@@ -162,17 +164,19 @@ struct LyricsWidgetView: View {
             if let image = SharedArtwork.image(named: entry.artworkFile) {
                 Image(uiImage: image)
                     .resizable()
+                    .scaledToFill()
                     .frame(width: 16, height: 16)
-                    .clipShape(RoundedRectangle(cornerRadius: 3))
-            } else {
-                Image(systemName: entry.isPlaying ? "music.note" : "pause.fill")
-                    .foregroundStyle(.green)
+                    .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                    .accessibilityHidden(true)
             }
+            Image(systemName: entry.isPlaying ? "music.note" : "pause.fill")
+                .foregroundStyle(entry.isPlaying ? WidgetTheme.Color.playing : WidgetTheme.Color.paused)
+                .accessibilityLabel(entry.isPlaying ? "播放中" : "已暫停")
             Text(entry.title)
                 .lineLimit(1)
                 .foregroundStyle(.secondary)
         }
-        .font(.caption2)
+        .font(.caption2.weight(.semibold))
     }
 
     /// 由系統自己推進的進度條：就算 App 的更新被節流，也看得出還在播放
@@ -185,7 +189,8 @@ struct LyricsWidgetView: View {
                 EmptyView()
             }
             .progressViewStyle(.linear)
-            .tint(.green)
+            .tint(WidgetTheme.Color.playing)
+            .accessibilityHidden(true)
         }
     }
 }

@@ -1,7 +1,9 @@
 import SwiftUI
 
 /// 設定頁（由主畫面右上角齒輪打開）：
-/// 設定檢查 / 開車 / 歌詞 / Spotify 帳號 / 進階 / 關於（診斷在關於裡）
+/// 設定檢查 / 開車 / 實驗 / 歌詞 / Spotify 帳號 / 進階 / 關於（診斷在關於裡）。
+/// 原生分組列表；每列左邊一個彩色小方塊圖示（跟 iOS 設定一樣），顏色依主題分：開車＝藍、實驗＝紫、
+/// 歌詞＝靛藍、進階＝灰、關於＝灰。
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -13,12 +15,10 @@ struct SettingsView: View {
                     NavigationLink {
                         SetupChecklistView()
                     } label: {
-                        Label {
-                            Text("設定檢查")
-                        } icon: {
-                            Image(systemName: model.setupNeedsAttention ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
-                                .foregroundStyle(model.setupNeedsAttention ? Color.orange : Color.green)
-                        }
+                        SettingsLabel("設定檢查",
+                                      subtitle: model.setupNeedsAttention ? "有項目需要處理" : "一切正常",
+                                      symbol: model.setupNeedsAttention ? "exclamationmark" : "checkmark",
+                                      color: model.setupNeedsAttention ? Theme.Semantic.attention : Theme.Semantic.ok)
                     }
                 }
                 DrivingSection()
@@ -53,29 +53,34 @@ private struct DrivingSection: View {
                     Text(mode.label).tag(mode)
                 }
             } label: {
-                Label("鎖定畫面與 CarPlay 歌詞", systemImage: "car")
+                SettingsLabel("鎖定畫面與 CarPlay 歌詞", symbol: "car.fill", color: .blue)
             }
             Toggle(isOn: $model.autoFocusInCar) {
-                Label("連上 CarPlay 時自動進入專注模式", systemImage: "car.side")
+                SettingsLabel("連上 CarPlay 時自動進入專注模式", symbol: "moon.fill", color: .indigo)
             }
             Toggle(isOn: $model.keepAwakeWhileDriving) {
-                Label("開車時保持螢幕開著", systemImage: "iphone")
+                SettingsLabel("開車時保持螢幕開著", symbol: "iphone", color: .blue)
             }
             if model.keepAwakeWhileDriving {
                 Toggle(isOn: $model.dimScreenWhileDriving) {
-                    Label("開車時把螢幕調暗", systemImage: "sun.min")
+                    SettingsLabel("開車時把螢幕調暗", symbol: "sun.min.fill", color: .blue)
                 }
             }
             // 一律顯示：「開車時」模式在家看得出為什麼沒有鎖定畫面歌詞；車子沒被認出來時也看得出來
-            LabeledContent("CarPlay", value: model.isCarConnected ? "已連接" : "未連接")
+            LabeledContent {
+                Text(model.isCarConnected ? "已連接" : "未連接")
+                    .foregroundStyle(model.isCarConnected ? Theme.Semantic.playing : Color.secondary)
+            } label: {
+                SettingsLabel("CarPlay", symbol: "cable.connector", color: .gray)
+            }
             if model.liveActivityMode != .off, model.auth.isLoggedIn, model.activitiesEnabled {
                 // 手動開始：車子沒被認出來、或 App 在背景時沒開成功，不用等下一次連接（還沒播歌就先顯示「連接中」）
                 Button {
                     model.startLiveActivityNow()
                     startRequestedAt = Date()
                 } label: {
-                    Label(startRequestedAt == nil ? "現在顯示鎖定畫面歌詞" : "已送出，看一下鎖定畫面",
-                          systemImage: "lock.iphone")
+                    SettingsLabel(startRequestedAt == nil ? "現在顯示鎖定畫面歌詞" : "已送出，看一下鎖定畫面",
+                                  symbol: "lock.iphone", color: .blue)
                 }
                 .accessibilityLabel("現在顯示鎖定畫面歌詞")
                 .accessibilityHint("不必連上 CarPlay，馬上在鎖定畫面開始顯示這首歌的歌詞")
@@ -88,7 +93,7 @@ private struct DrivingSection: View {
 
         Section {
             Toggle(isOn: $model.locationKeepAliveEnabled) {
-                Label("鎖定時也更新歌詞（使用定位）", systemImage: "location")
+                SettingsLabel("鎖定時也更新歌詞（使用定位）", symbol: "location.fill", color: .purple)
             }
             if model.locationKeepAliveEnabled {
                 LabeledContent("狀態", value: model.locationKeepAliveStatus)
@@ -97,7 +102,7 @@ private struct DrivingSection: View {
                     Button {
                         model.perform(.openSettings)
                     } label: {
-                        Label("到系統設定允許定位", systemImage: "gear")
+                        SettingsLabel("到系統設定允許定位", symbol: "gear", color: .gray)
                     }
                 }
             }
@@ -129,13 +134,23 @@ private struct LyricsSection: View {
         @Bindable var model = model
         Section {
             Stepper(value: $model.globalOffset, in: -5...5, step: 0.25) {
-                LabeledContent("歌詞提前（所有歌曲）", value: String(format: "%+.2f 秒", model.globalOffset))
-                    .monospacedDigit()
+                LabeledContent {
+                    Text(String(format: "%+.2f 秒", model.globalOffset))
+                        .monospacedDigit()
+                        .contentTransition(.numericText(value: model.globalOffset))
+                } label: {
+                    SettingsLabel("歌詞提前（所有歌曲）", symbol: "timer", color: .indigo)
+                }
             }
             if model.nowPlaying != nil {
                 Stepper(value: $model.trackOffset, in: -5...5, step: 0.25) {
-                    LabeledContent("歌詞提前（只有這首）", value: String(format: "%+.2f 秒", model.trackOffset))
-                        .monospacedDigit()
+                    LabeledContent {
+                        Text(String(format: "%+.2f 秒", model.trackOffset))
+                            .monospacedDigit()
+                            .contentTransition(.numericText(value: model.trackOffset))
+                    } label: {
+                        SettingsLabel("歌詞提前（只有這首）", symbol: "music.note", color: .indigo)
+                    }
                 }
             }
             if model.globalOffset != 0 || model.trackOffset != 0 {
@@ -178,8 +193,9 @@ private struct AccountSection: View {
 
     var body: some View {
         Section {
-            HStack(spacing: 10) {
-                StatusDot(color: model.auth.isLoggedIn ? .green : .gray)
+            HStack(spacing: Theme.Spacing.m) {
+                SettingsIcon(symbol: "person.fill",
+                             color: model.auth.isLoggedIn ? Theme.Semantic.ok : Theme.Semantic.idle)
                 Text(model.auth.isLoggedIn ? "已登入" : "尚未登入")
                     .lineLimit(2)
             }
@@ -188,8 +204,8 @@ private struct AccountSection: View {
                     Button {
                         model.relogin()
                     } label: {
-                        Label("重新登入以使用播放按鈕", systemImage: "exclamationmark.triangle")
-                            .foregroundStyle(.orange)
+                        Label("重新登入以使用播放按鈕", systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(Theme.Semantic.attention)
                     }
                 }
                 Button("登出 Spotify", role: .destructive) { confirmLogout = true }
@@ -223,21 +239,21 @@ private struct AdvancedSection: View {
         @Bindable var model = model
         Section {
             Toggle(isOn: $model.backgroundEnabled) {
-                Label("鎖定手機後繼續同步", systemImage: "arrow.clockwise.circle")
+                SettingsLabel("鎖定手機後繼續同步", symbol: "arrow.clockwise", color: .gray)
             }
             Toggle(isOn: $model.endActivityWhenIdle) {
-                Label("沒在播放時收起鎖定畫面歌詞", systemImage: "rectangle.topthird.inset.filled")
+                SettingsLabel("沒在播放時收起鎖定畫面歌詞", symbol: "rectangle.topthird.inset.filled", color: .gray)
             }
             Toggle(isOn: $model.keepScreenOn) {
-                Label("播放時螢幕不自動關閉（不限開車）", systemImage: "sun.max")
+                SettingsLabel("播放時螢幕不自動關閉（不限開車）", symbol: "sun.max.fill", color: .gray)
             }
             Toggle(isOn: $model.prefetchQueueOnWiFi) {
-                Label("Wi-Fi 時預先載入播放佇列的歌詞", systemImage: "wifi")
+                SettingsLabel("Wi-Fi 時預先載入播放佇列的歌詞", symbol: "wifi", color: .gray)
             }
             Button {
                 model.lyrics.clearCache()
             } label: {
-                Label("清除歌詞快取（保留手動指定）", systemImage: "trash")
+                SettingsLabel("清除歌詞快取（保留手動指定）", symbol: "trash", color: .gray)
             }
         } header: {
             Text("進階")
@@ -262,18 +278,18 @@ private struct AboutSection: View {
             if let exp = model.signingExpiration, let days = model.signingDaysRemaining {
                 LabeledContent("簽名有效至") {
                     Text("\(exp.formatted(.dateTime.month().day()))（剩 \(max(0, days)) 天）")
-                        .foregroundStyle(days <= 2 ? Color.orange : Color.secondary)
+                        .foregroundStyle(days <= 2 ? Theme.Semantic.attention : Color.secondary)
                 }
             }
             NavigationLink {
                 DiagnosticsView()
             } label: {
-                Label("診斷", systemImage: "stethoscope")
+                SettingsLabel("診斷", symbol: "stethoscope", color: .gray)
             }
             Button {
                 exportFile = ExportFile(url: model.writeDiagnosticsExport())
             } label: {
-                Label("分享診斷紀錄", systemImage: "square.and.arrow.up")
+                SettingsLabel("分享診斷紀錄", symbol: "square.and.arrow.up", color: .gray)
             }
             .sheet(item: $exportFile) { file in
                 ShareSheet(url: file.url)

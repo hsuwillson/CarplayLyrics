@@ -5,7 +5,8 @@ extension UTType {
     static let lrc = UTType(filenameExtension: "lrc") ?? .plainText
 }
 
-/// 選擇其他 LRCLIB 結果、自由搜尋、匯入 LRC 檔
+/// 選擇其他 LRCLIB 結果、自由搜尋、匯入 LRC 檔。
+/// 原生搜尋列（鍵盤按「搜尋」送出）；每個結果一列：同步 / 未同步 / 純音樂的籤 + 長度差。
 struct LyricsPickerView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -24,12 +25,19 @@ struct LyricsPickerView: View {
     var body: some View {
         NavigationStack {
             List {
-                searchSection
+                actionsSection
                 if let errorMessage {
-                    Section { Text(errorMessage).foregroundStyle(.red) }
+                    Section {
+                        Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(Theme.Semantic.attention)
+                    }
                 }
                 resultsSection
             }
+            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "歌名 歌手")
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+            .onSubmit(of: .search) { search() }
             .navigationTitle("選擇歌詞")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -51,19 +59,8 @@ struct LyricsPickerView: View {
         }
     }
 
-    private var searchSection: some View {
+    private var actionsSection: some View {
         Section {
-            HStack {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.secondary)
-                TextField("歌名 歌手", text: $query)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .submitLabel(.search)
-                    .onSubmit { search() }
-                Button("搜尋") { search() }
-                    .disabled(query.trimmingCharacters(in: .whitespaces).isEmpty || isLoading)
-            }
             Button {
                 showImporter = true
             } label: {
@@ -85,13 +82,16 @@ struct LyricsPickerView: View {
     private var resultsSection: some View {
         Section {
             if isLoading {
-                HStack(spacing: 10) {
+                HStack(spacing: Theme.Spacing.m) {
                     ProgressView()
                     Text("搜尋中…").foregroundStyle(.secondary)
                 }
             } else if results.isEmpty {
-                Text("沒有結果，試試只輸入歌名或換個拼法。")
-                    .foregroundStyle(.secondary)
+                ContentUnavailableView {
+                    Label("沒有結果", systemImage: "text.magnifyingglass")
+                } description: {
+                    Text("試試只輸入歌名，或換個拼法")
+                }
             }
             ForEach(results, id: \.id) { track in
                 Button {
@@ -146,23 +146,30 @@ private struct CandidateRow: View {
     }
 
     private var kindColor: Color {
-        track.hasSynced ? Color.green : Color.gray
+        track.hasSynced ? Theme.Semantic.ok : Theme.Semantic.idle
     }
 
     private var durationText: String? {
         guard let d = track.duration else { return nil }
         guard songDuration > 0 else { return formatTime(d) }
         let diff = Int(abs(d - songDuration).rounded())
-        return diff == 0 ? "\(formatTime(d))（長度相同）" : "\(formatTime(d))（差 \(diff) 秒）"
+        return diff == 0 ? "\(formatTime(d))・長度相同" : "\(formatTime(d))・差 \(diff) 秒"
+    }
+
+    /// 長度差 3 秒內：很可能就是這個版本
+    private var isCloseMatch: Bool {
+        guard let d = track.duration, songDuration > 0 else { return false }
+        return abs(d - songDuration) <= 3
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: Theme.Spacing.m) {
             Image(systemName: track.hasSynced ? "waveform" : "text.alignleft")
                 .font(.title3)
                 .foregroundStyle(kindColor)
                 .frame(width: 28)
                 .padding(.top, 2)
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
                 Text(track.trackName ?? "（無歌名）")
                     .foregroundStyle(Color.primary)
@@ -170,20 +177,22 @@ private struct CandidateRow: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                HStack(spacing: 8) {
+                HStack(spacing: Theme.Spacing.s) {
                     Text(kindText)
                         .font(.caption2.bold())
+                        .foregroundStyle(kindColor)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(kindColor.opacity(0.2), in: Capsule())
+                        .background(kindColor.opacity(0.16), in: Capsule())
                     if let durationText {
                         Text(durationText)
+                            .foregroundStyle(isCloseMatch ? Theme.Semantic.ok : Color.secondary)
                     }
                 }
                 .font(.caption2)
-                .foregroundStyle(.secondary)
             }
         }
         .padding(.vertical, 2)
+        .accessibilityElement(children: .combine)
     }
 }
