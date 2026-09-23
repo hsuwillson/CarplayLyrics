@@ -190,6 +190,8 @@ jobs:
 
       # 更新 AltStore 來源：手機上的 AltStore 按一下就能更新（不必再從電腦 sideload）
       - name: Update AltStore source
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           python3 - <<'PY'
           import json, os, subprocess, datetime
@@ -215,6 +217,8 @@ jobs:
           git add altstore/apps.json
           git diff --cached --quiet || git commit -m "AltStore source: build #${{ github.run_number }} [skip ci]"
           git push origin HEAD:main || echo "push 失敗（可能有新的 commit），下次建置會補上"
+          # 備用網址：有些網路連不到 raw.githubusercontent.com，改用 github.com 的 release 資產
+          gh release upload latest-build altstore/apps.json --clobber
 
       - uses: actions/upload-artifact@v5
         with:
