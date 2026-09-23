@@ -55,6 +55,20 @@ final class AppModel {
     @ObservationIgnored private(set) var maxPollGap: TimeInterval = 0
     @ObservationIgnored private(set) var lastResponseBytes = 0
     @ObservationIgnored private(set) var lastErrorDetail: String?
+    /// 歌詞時間準不準（診斷用）：換句次數、晚超過 0.5 秒的次數、最晚多少
+    @ObservationIgnored private var lineChangeCount = 0
+    @ObservationIgnored private var lateLineCount = 0
+    @ObservationIgnored private var maxLineLateness: TimeInterval = 0
+    /// 輪詢修正位置的次數與最大差距
+    @ObservationIgnored private var positionCorrections = 0
+    @ObservationIgnored private var maxPositionDrift: TimeInterval = 0
+    /// 最近一次排定的輪詢間隔（診斷用）
+    @ObservationIgnored private(set) var lastPollDelay: TimeInterval = 0
+    /// 上一次寫狀態快照的時間（定期快照用）
+    @ObservationIgnored private var lastSnapshotAt = Date.distantPast
+    /// 上一次記錄的輪詢模式（只在改變時記一行）
+    @ObservationIgnored private var loggedSurface: PollPolicy.Surface?
+    @ObservationIgnored private var memoryWarningObserver: NSObjectProtocol?
     @ObservationIgnored private(set) var artworkFile: String?
 
     // MARK: 設定
@@ -87,7 +101,11 @@ final class AppModel {
     var liveActivityEnabled: Bool {
         didSet {
             preferences.liveActivityEnabled = liveActivityEnabled
-            if liveActivityEnabled { pushLiveActivity(placeholder: true, priority: .important) } else { liveActivity.end() }
+            if liveActivityEnabled {
+                pushLiveActivity(placeholder: true, priority: .important)
+            } else {
+                liveActivity.end(reason: "設定關閉")
+            }
         }
     }
 
@@ -136,7 +154,7 @@ final class AppModel {
         didSet {
             preferences.liveActivityOnlyInCar = liveActivityOnlyInCar
             if liveActivityOnlyInCar, !isCarConnected {
-                liveActivity.end()
+                liveActivity.end(reason: "設定為開車時，目前沒連 CarPlay")
             } else {
                 pushLiveActivity(placeholder: true, priority: .important)
             }
@@ -222,8 +240,7 @@ final class AppModel {
                 debugLog("連上車用音訊，開始即時動態")
                 self.pushLiveActivity(placeholder: true, priority: .important)
             } else {
-                debugLog("離開車用音訊，收起即時動態")
-                self.liveActivity.end()
+                self.liveActivity.end(reason: "離開 CarPlay")
             }
         }
         // 冷啟動時由控制中心 / 捷徑要求的畫面（通知可能比畫面早到）
@@ -247,6 +264,12 @@ final class AppModel {
             }
         }
         reachability.start()
+        UIDevice.current.isBatteryMonitoringEnabled = true
+        memoryWarningObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main
+        ) { _ in
+            debugLog("系統記憶體不足警告")
+        }
         power.onChange = { [weak self] constrained in self?.applyPowerState(constrained) }
         applyPowerState(power.isConstrained)
         openScreenObserver = NotificationCenter.default.addObserver(forName: .carLyricsOpenScreen, object: nil,
@@ -318,6 +341,7 @@ final class AppModel {
 
     func appBecameActive() {
         isForeground = true
+        debugLog("回到前景")
         // 在車上打開（例如捷徑自動化）：直接進專注模式，一次車程只自動進一次
         if isCarConnected, autoFocusInCar, !autoFocusedThisCarSession, requestedScreen == nil {
             autoFocusedThisCarSession = true
@@ -336,12 +360,13 @@ final class AppModel {
     func appEnteredBackground() {
         isForeground = false
         updateIdleTimer()
+        logSnapshot("進入背景")
         if backgroundEnabled && auth.isLoggedIn {
             audioKeeper.ensureRunning()
             debugLog("進入背景，持續執行")
         } else {
             // 使用者關閉背景執行：直接結束即時動態，避免之後顯示「暫停更新」像是故障
-            if liveActivity.isActive { liveActivity.end() }
+            if liveActivity.isActive { liveActivity.end(reason: "背景同步已關閉") }
             widget.publish(.idle(auth.isLoggedIn ? "背景執行已關閉，打開 CarLyrics 繼續" : "請先登入 Spotify"))
             stop()
         }
@@ -353,6 +378,7 @@ final class AppModel {
         if backgroundEnabled && auth.isLoggedIn { audioKeeper.start() }
         if !poller.isRunning {
             debugLog("開始輪詢（\(BuildInfo.summary)）")
+            logSnapshot("開始")
             poller.start { [weak self] in await self?.pollOnce() ?? 10 }
         }
         if tickTask == nil { startTickLoop() }
@@ -409,7 +435,7 @@ final class AppModel {
     func logout() {
         auth.logout()
         playback = PlaybackState(session: .loggedOut)
-        liveActivity.end()
+        liveActivity.end(reason: "登出")
         audioKeeper.stop()
         clearPlayback()
         session = .loggedOut
@@ -513,11 +539,20 @@ final class AppModel {
 
     /// 執行一次輪詢，回傳下一次輪詢前要等待的秒數
     private func pollOnce() async -> TimeInterval {
+        let delay = await pollOnceInner()
+        lastPollDelay = delay
+        logSurfaceChangeIfNeeded(delay: delay)
+        // 播放 / 背景執行期間每 10 分鐘記一次完整狀態，事後看紀錄就知道當時的情況
+        if Date().timeIntervalSince(lastSnapshotAt) > 600 { logSnapshot("定期") }
+        return delay
+    }
+
+    private func pollOnceInner() async -> TimeInterval {
         recordHeartbeat()
 
         guard auth.isLoggedIn else {
             // 可能是在背景被自動登出（refresh token 失效）：停止一切，不要空轉耗電
-            if liveActivity.isActive { liveActivity.end() }
+            if liveActivity.isActive { liveActivity.end(reason: "登入失效") }
             if audioKeeper.wantsRunning { audioKeeper.stop() }
             session = .loggedOut
             playback.session = .loggedOut
@@ -560,7 +595,20 @@ final class AppModel {
 
     /// 用 Core 的 reducer 算出新狀態與要做的事（對照表：docs/event-effects.md）
     private func handle(_ result: PlayerPollResult) -> TimeInterval {
+        // 記下輪詢前推算的位置，看 Spotify 回來的位置差多少（同步準不準的線索）
+        let trackBefore = playback.nowPlaying?.trackID
+        let predicted = playback.engine.position(at: AppClock.now())
         let output = reducer.reduce(&playback, result: result, context: context())
+        if let predicted, trackBefore == playback.nowPlaying?.trackID, playback.nowPlaying?.isPlaying == true,
+           let actual = playback.engine.position(at: AppClock.now()) {
+            let drift = actual - predicted
+            positionCorrections += 1
+            maxPositionDrift = max(maxPositionDrift, abs(drift))
+            // 0.4 秒以上但不是拖動（拖動另外記）：可能是網路延遲或 Spotify 回報跳動
+            if abs(drift) >= 0.4, abs(drift) < 2 {
+                debugLog(String(format: "位置修正 %+.2f 秒", drift))
+            }
+        }
         syncPublishedState(result)
         for effect in output.effects { run(effect) }
         updateIdleTimer()
@@ -603,6 +651,7 @@ final class AppModel {
             lyricsAutoRetryCount = 0
             // 先套用這首歌的延遲，第一次寫給小工具的時間軸就是正確的
             trackOffset = trackOffsets.offset(for: np.trackID)
+            if trackOffset != 0 { debugLog(String(format: "這首歌詞提前 %+.2f 秒（已記住的設定）", trackOffset)) }
             lyrics.load(for: np)
             loadArtwork(for: np)
         case .clearPlayback:
@@ -614,8 +663,7 @@ final class AppModel {
         case .pushCurrent(let important):
             pushLiveActivity(priority: important ? .important : .routine)
         case .endActivity:
-            debugLog("閒置，結束即時動態（動態島讓出來）")
-            liveActivity.end()
+            liveActivity.end(reason: idleEndReason)
         case .publishIdle(let message):
             widget.publish(.idle(message))
         case .publishTimeline(let debounce):
@@ -626,6 +674,7 @@ final class AppModel {
             rescheduleTick()
         case .stopForIdle(let minutes):
             debugLog("閒置超過 \(minutes) 分鐘，停止背景執行以省電（下次打開 App 會自動恢復）")
+            logSnapshot("閒置停止")
             audioKeeper.stop()
             stop()
         }
@@ -707,6 +756,15 @@ final class AppModel {
         let d = LyricsDisplay(lines: syncedLines, position: effective)
         if d != lyricsDisplay {
             let lineChanged = d.current != lyricsDisplay.current || d.index != lyricsDisplay.index
+            // 換句比歌詞時間晚了多少（背景計時器被延後時會變大）
+            if lineChanged, let i = d.index, syncedLines.indices.contains(i), d.index != lyricsDisplay.index {
+                let lateness = effective - syncedLines[i].time
+                if lateness >= 0, lateness < 5 {
+                    lineChangeCount += 1
+                    maxLineLateness = max(maxLineLateness, lateness)
+                    if lateness > 0.5 { lateLineCount += 1 }
+                }
+            }
             lyricsDisplay = d
             pushLiveActivity()
             if lineChanged { widget.lineChanged(isForeground: isForeground) }
@@ -824,6 +882,132 @@ final class AppModel {
     }
 
     // MARK: - 心跳（偵測背景執行是否被中斷）
+
+    // MARK: - 診斷快照
+
+    private var idleEndReason: String {
+        switch playback.idleKind {
+        case .paused: return "閒置（暫停）"
+        case .nothing: return "閒置（沒在播放）"
+        case .nonMusic: return "閒置（廣告 / Podcast）"
+        case nil: return "閒置"
+        }
+    }
+
+    /// 輪詢模式改變時記一行（前景 / 背景看得到 / 背景看不到），不用每次輪詢都記
+    private func logSurfaceChangeIfNeeded(delay: TimeInterval) {
+        let surface = pollSurface
+        guard surface != loggedSurface else { return }
+        loggedSurface = surface
+        debugLog("輪詢模式：\(Self.surfaceLabel(surface))（目前間隔 \(String(format: "%.1f", delay)) 秒）")
+    }
+
+    private static func surfaceLabel(_ s: PollPolicy.Surface) -> String {
+        switch s {
+        case .foreground: return "前景"
+        case .visible: return "背景・鎖定畫面 / CarPlay 有歌詞"
+        case .hidden: return "背景・沒有畫面在顯示"
+        }
+    }
+
+    /// 目前所有狀態整理成一份（不含 token / 帳號）
+    func diagnosticsReport(reason: String) -> DiagnosticsReport {
+        typealias R = DiagnosticsReport
+        let now = Date()
+        let info = ProcessInfo.processInfo
+        let device = UIDevice.current
+        var r = DiagnosticsReport(reason: reason)
+        r.add("版本", [("build", BuildInfo.summary),
+                      ("建置", BuildInfo.buildDate.map { $0.formatted(date: .numeric, time: .shortened) }),
+                      ("iOS", device.systemVersion), ("機型", Self.deviceModel),
+                      ("簽名剩", signingDaysRemaining.map { "\($0) 天" })])
+        r.add("設定", [("鎖定畫面歌詞", liveActivityMode.label), ("背景同步", R.yesNo(backgroundEnabled)),
+                      ("閒置收起", R.yesNo(endActivityWhenIdle)), ("上車專注", R.yesNo(autoFocusInCar)),
+                      ("螢幕常亮", R.yesNo(keepScreenOn)), ("Wi-Fi 預載佇列", R.yesNo(prefetchQueueOnWiFi)),
+                      ("歌詞提前", String(format: "全部 %+.2f / 這首 %+.2f", globalOffset, trackOffset))])
+        r.add("播放", [("前景", R.yesNo(isForeground)), ("登入", R.yesNo(auth.isLoggedIn)),
+                      ("狀態", session.label), ("歌詞", lyrics.state.label),
+                      ("手動歌詞", lyrics.hasManualLyrics ? "是" : nil),
+                      ("歌曲", nowPlaying.map { "\($0.title) – \($0.artist)" }),
+                      ("位置", playback.engine.position(at: AppClock.now()).map {
+                          "\(formatTime($0)) / \(formatTime(nowPlaying?.duration ?? 0))" })])
+        r.add("輪詢", [("執行中", R.yesNo(poller.isRunning)), ("模式", Self.surfaceLabel(pollSurface)),
+                      ("間隔", R.seconds(lastPollDelay)), ("最近", R.ago(lastPollAt, now: now)),
+                      ("最長間隔", R.seconds(maxPollGap)), ("連續錯誤", playback.errorStreak > 0 ? "\(playback.errorStreak)" : nil),
+                      ("配額模式", playback.quotaActive(now: now) ? "是" : nil),
+                      ("最近錯誤", lastErrorDetail), ("回應", "\(lastResponseBytes) bytes")])
+        r.add("歌詞時間", [("換句", "\(lineChangeCount) 次"), ("晚 >0.5 秒", "\(lateLineCount) 次"),
+                          ("最晚", R.seconds(maxLineLateness)),
+                          ("輪詢修正", "\(positionCorrections) 次，最大 \(String(format: "%.2f", maxPositionDrift)) 秒")])
+        r.add("即時動態", [("系統允許", R.yesNo(activitiesEnabled)), ("狀態", liveActivity.stateDescription),
+                          ("送出", "\(liveActivity.updateCount)"),
+                          ("套用/被擋", "\(liveActivity.acceptedCount)/\(liveActivity.rejectedCount)"),
+                          ("背景被擋", liveActivity.backgroundBlocked ? "是" : nil),
+                          ("最近不同欄位", liveActivity.lastMismatchField),
+                          ("最近被擋", R.ago(liveActivity.lastRejectedAt, now: now)),
+                          ("開始", R.ago(liveActivity.startedAt, now: now)),
+                          ("最近錯誤", liveActivity.lastError)])
+        r.add("小工具", [("模式", widget.modeDescription),
+                        ("要求/實際", "\(widget.requestCount)/\(widget.renderCount)"),
+                        ("最後要求", R.ago(widget.lastRequestAt, now: now)),
+                        ("系統最後重整", R.ago(widget.lastRenderAt, now: now))])
+        r.add("背景音訊", [("執行中", R.yesNo(audioKeeper.isRunning)), ("應該執行", R.yesNo(audioKeeper.wantsRunning)),
+                          ("重啟", "\(audioKeeper.restartCount) 次"),
+                          ("最近重啟", audioKeeper.lastRestartReason.map { reason in
+                              "\(reason)（\(R.ago(audioKeeper.lastRestartAt, now: now) ?? "?")）" }),
+                          ("CarPlay", R.yesNo(isCarConnected))])
+        r.add("系統", [("網路", reachability.isOnline ? (reachability.isWiFi ? "Wi-Fi" : "行動網路 / 計量") : "離線"),
+                      ("低耗電", R.yesNo(info.isLowPowerModeEnabled)), ("溫度", Self.thermalLabel(info.thermalState)),
+                      ("電量", R.percent(device.batteryLevel)), ("充電", Self.batteryLabel(device.batteryState))])
+        return r
+    }
+
+    /// 把目前狀態寫進紀錄（啟動、進出背景、閒置停止、每 10 分鐘）
+    func logSnapshot(_ reason: String) {
+        lastSnapshotAt = Date()
+        debugLog(diagnosticsReport(reason: reason).text)
+    }
+
+    /// 分享用：最上面是「現在」的狀態快照，下面是完整紀錄檔
+    func writeDiagnosticsExport() -> URL {
+        let header = diagnosticsReport(reason: "分享").text
+        let body = (try? String(contentsOf: DebugLog.shared.fileURL, encoding: .utf8)) ?? "（紀錄檔讀取失敗）"
+        let f = DateFormatter()
+        f.dateFormat = "yyyyMMdd-HHmmss"
+        let stamp = f.string(from: Date())
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("CarLyrics-診斷-\(stamp).txt")
+        let text = "CarLyrics 診斷紀錄\n\(header)\n\n──── 紀錄（舊 → 新）────\n\(body)"
+        try? text.write(to: url, atomically: true, encoding: .utf8)
+        return url
+    }
+
+    private static var deviceModel: String {
+        var info = utsname()
+        uname(&info)
+        return withUnsafeBytes(of: &info.machine) { raw in
+            String(decoding: raw.prefix { $0 != 0 }, as: UTF8.self)
+        }
+    }
+
+    private static func thermalLabel(_ s: ProcessInfo.ThermalState) -> String {
+        switch s {
+        case .nominal: return "正常"
+        case .fair: return "略熱"
+        case .serious: return "過熱"
+        case .critical: return "嚴重過熱"
+        @unknown default: return "未知"
+        }
+    }
+
+    private static func batteryLabel(_ s: UIDevice.BatteryState) -> String? {
+        switch s {
+        case .charging: return "充電中"
+        case .full: return "已充滿"
+        case .unplugged: return "未充電"
+        case .unknown: return nil
+        @unknown default: return nil
+        }
+    }
 
     private func recordHeartbeat() {
         let now = Date()

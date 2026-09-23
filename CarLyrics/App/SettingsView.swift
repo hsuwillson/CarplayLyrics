@@ -202,6 +202,7 @@ private struct LyricsSection: View {
 
 private struct AboutSection: View {
     @Environment(AppModel.self) private var model
+    @State private var exportFile: ExportFile?
 
     var body: some View {
         Section {
@@ -214,6 +215,14 @@ private struct AboutSection: View {
                     Text("\(exp.formatted(.dateTime.month().day()))（剩 \(max(0, days)) 天）")
                         .foregroundStyle(days <= 2 ? Color.orange : Color.secondary)
                 }
+            }
+            Button {
+                exportFile = ExportFile(url: model.writeDiagnosticsExport())
+            } label: {
+                Label("分享診斷紀錄", systemImage: "square.and.arrow.up")
+            }
+            .sheet(item: $exportFile) { file in
+                ShareSheet(url: file.url)
             }
             NavigationLink {
                 DiagnosticsView()

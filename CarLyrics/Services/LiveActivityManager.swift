@@ -87,8 +87,7 @@ final class LiveActivityManager {
             Task { await extra.end(nil, dismissalPolicy: .immediate) }
         }
         if let startedAt, Date().timeIntervalSince(startedAt) > Self.renewAfter, let state = lastState {
-            debugLog("即時動態接近 8 小時上限，自動換新")
-            end()
+            end(reason: "接近 8 小時上限，自動換新")
             start(state)
         }
     }
@@ -139,7 +138,8 @@ final class LiveActivityManager {
         send(lastState, to: activity)
     }
 
-    func end() {
+    /// - Parameter reason: 寫進紀錄，事後看得出為什麼消失（閒置、下車、設定、登出…）
+    func end(reason: String = "") {
         stateObserver?.cancel()
         stateObserver = nil
         verifyTask?.cancel()
@@ -152,7 +152,8 @@ final class LiveActivityManager {
             await previous?.value
             await activity.end(nil, dismissalPolicy: .immediate)
         }
-        debugLog("即時動態已結束")
+        let lived = startedAt.map { "，持續 \(Int(Date().timeIntervalSince($0) / 60)) 分鐘" } ?? ""
+        debugLog("即時動態已結束（\(reason.isEmpty ? "未註明" : reason)\(lived)，套用 \(acceptedCount)／被擋 \(rejectedCount)）")
     }
 
     // MARK: - 內部
@@ -260,6 +261,10 @@ final class LiveActivityManager {
         stateObserver = Task { [weak self] in
             for await state in a.activityStateUpdates {
                 guard let self else { return }
+                if state == .stale {
+                    // 超過 staleDate 沒更新：鎖定畫面會顯示「歌詞沒跟上」
+                    debugLog("即時動態變成 stale（\(self.lastUpdateAt.map { "上次更新 \(Int(Date().timeIntervalSince($0))) 秒前" } ?? "沒有更新紀錄")）")
+                }
                 if state == .dismissed || state == .ended {
                     debugLog("即時動態被關閉（\(state)）")
                     if self.activity?.id == a.id {

@@ -22,7 +22,8 @@ final class DebugLog {
         return dir.appendingPathComponent("debug.log")
     }()
 
-    private static let maxFileBytes = 200_000
+    /// 大約可以放好幾趟車程的紀錄；超過時只保留後半段
+    private static let maxFileBytes = 600_000
     @ObservationIgnored private let formatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "MM-dd HH:mm:ss.SSS"

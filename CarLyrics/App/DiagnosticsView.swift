@@ -1,18 +1,23 @@
 import ActivityKit
 import Combine
 import SwiftUI
+import UIKit
 
 /// 診斷頁：背景執行、即時動態、小工具、歌詞的即時狀態與紀錄檔
 struct DiagnosticsView: View {
     @Environment(AppModel.self) private var model
     private var log: DebugLog { DebugLog.shared }
     @State private var appGroupOK = false
+    /// 分享用的檔案（按下分享時才產生：目前狀態 + 完整紀錄）
+    @State private var exportFile: ExportFile?
+    @State private var confirmClear = false
     /// 每秒刷新一次（背景音訊、即時動態的狀態不會觸發畫面更新）
     @State private var now = Date()
     private let refresh = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
         List {
+            shareSection
             overviewSection
             versionSection
             systemSection
@@ -25,18 +30,44 @@ struct DiagnosticsView: View {
         .navigationTitle("診斷")
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
-                ShareLink(item: log.fileURL) {
+                Button {
+                    shareLog()
+                } label: {
                     Image(systemName: "square.and.arrow.up")
                 }
                 .accessibilityLabel("分享診斷紀錄")
-                Button("清除") { log.clear() }
+                Button("清除") { confirmClear = true }
             }
+        }
+        .confirmationDialog("清除所有診斷紀錄？", isPresented: $confirmClear, titleVisibility: .visible) {
+            Button("清除", role: .destructive) { log.clear() }
+        }
+        .sheet(item: $exportFile) { file in
+            ShareSheet(url: file.url)
         }
         .onAppear { check() }
         .onReceive(refresh) { now = $0 }
     }
 
     // MARK: 區塊
+
+    private var shareSection: some View {
+        Section {
+            Button {
+                shareLog()
+            } label: {
+                Label("分享診斷紀錄給 Claude", systemImage: "square.and.arrow.up")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+        } footer: {
+            Text("會附上目前所有狀態（不含帳號或密碼）與完整紀錄。出問題時先別關 App，直接按這裡。")
+        }
+    }
+
+    private func shareLog() {
+        exportFile = ExportFile(url: model.writeDiagnosticsExport())
+    }
 
     private var overviewSection: some View {
         Section("總覽") {
@@ -200,4 +231,21 @@ private struct DiagRow: View {
         }
         .accessibilityElement(children: .combine)
     }
+}
+
+/// 分享的檔案（sheet 需要 Identifiable）
+struct ExportFile: Identifiable {
+    let url: URL
+    var id: URL { url }
+}
+
+/// 系統分享面板
+struct ShareSheet: UIViewControllerRepresentable {
+    let url: URL
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: [url], applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }
