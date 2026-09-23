@@ -77,7 +77,6 @@ final class UserFacingErrorCoverageTests: XCTestCase {
         }
         XCTAssertFalse(UserFacingError.loginFailed("y").message.contains("y"), "原始訊息不上畫面")
         XCTAssertFalse(UserFacingError.unknown("z").message.contains("z"))
-        XCTAssertEqual(UserFacingError.unknown("z").message, "z")
         XCTAssertEqual(UserFacingError.spotifyForbidden.action, .none)
         XCTAssertEqual(UserFacingError.lyricsUnavailable("x").action, .retry)
         XCTAssertEqual(UserFacingError.spotifyServer(1).action, .retry)
