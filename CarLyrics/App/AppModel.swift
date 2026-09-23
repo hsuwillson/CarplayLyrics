@@ -21,6 +21,8 @@ final class AppModel {
     @ObservationIgnored private let screen = ScreenDimmer()
     /// 開車模式（留在前景讓 CarPlay 歌詞即時更新）的決策
     @ObservationIgnored private let drivingPolicy = DrivingModePolicy()
+    /// 即時動態每次更新帶的「接下來幾句」視窗
+    @ObservationIgnored private let windowPolicy = LiveActivityWindowPolicy()
     @ObservationIgnored private let reachability = Reachability()
     @ObservationIgnored private let artwork = ArtworkStore()
     @ObservationIgnored private let poller = PlaybackPoller()
@@ -254,6 +256,7 @@ final class AppModel {
         prefetchQueueOnWiFi = preferences.prefetchQueueOnWiFi
         hasSeenSetup = preferences.hasSeenSetup
         isCarConnected = SilentAudioKeeper.detectCar()
+        liveActivity.carConnected = isCarConnected
         session = auth.isLoggedIn ? .connecting : .loggedOut
 
         checkPreviousHeartbeat()
@@ -268,6 +271,12 @@ final class AppModel {
         audioKeeper.onCarConnectionChanged = { [weak self] connected in
             guard let self else { return }
             self.isCarConnected = connected
+            self.liveActivity.carConnected = connected
+            if connected {
+                // CarPlay 儀表板要顯示即時動態的線索：連上時已經有沒有即時動態、它是什麼時候開始的
+                let started = self.liveActivity.startedAt.map { "\(Int(Date().timeIntervalSince($0) / 60)) 分鐘前開始" } ?? "尚未開始"
+                debugLog("連上車用音訊時即時動態：\(self.liveActivity.stateDescription)（\(started)；\(self.isForeground ? "前景" : "背景")）")
+            }
             // 上車 / 下車：開車模式（螢幕不自動關閉、調暗）跟著開關
             self.updateIdleTimer()
             // 上車：如果正在播歌，直接進專注模式（車架上看得比較清楚）
@@ -411,8 +420,10 @@ final class AppModel {
             audioKeeper.ensureRunning()
             debugLog("進入背景，持續執行")
             if isCarConnected, liveActivity.isActive {
-                debugLog("在車上進入背景：iOS 會擋掉背景的即時動態更新，CarPlay 歌詞會停在最後一句（staleDate 到了畫面自己推進一次）；小工具照時間軸繼續")
+                debugLog("在車上進入背景：iOS 會擋掉背景的即時動態更新，CarPlay 歌詞會停在最後一次套用的內容（staleDate 到了畫面自己依視窗推進一次，之後靠每句的進度條）；小工具照時間軸繼續")
             }
+            // 實驗：有背景任務撐著時系統是否放行更新（約 25 秒，之後自動結束）
+            liveActivity.appEnteredBackground()
         } else {
             // 使用者關閉背景執行：直接結束即時動態，避免之後顯示「暫停更新」像是故障
             if liveActivity.isActive { endLiveActivity(reason: "背景同步已關閉") }
@@ -905,6 +916,19 @@ final class AppModel {
         liveActivity.end(reason: reason)
     }
 
+    /// 診斷用：結束再重新開始一個即時動態（測試 CarPlay 儀表板是否只顯示「連上車之後才開始」的即時動態）。
+    /// 只在前景有效（系統只允許前景開始）；「開車時才顯示」沒偵測到車用音訊時視同手動出口
+    func restartLiveActivity() {
+        guard liveActivityEnabled, auth.isLoggedIn else {
+            debugLog("重新開始即時動態：未登入或設定為關閉，略過")
+            return
+        }
+        debugLog("重新開始即時動態（診斷；CarPlay \(isCarConnected ? "已連接" : "未連接")）")
+        liveActivity.end(reason: "診斷：重新開始")
+        if liveActivityOnlyInCar, !isCarConnected { liveActivityCarOverride = true }
+        pushLiveActivity(placeholder: true, priority: .important)
+    }
+
     /// - Parameter placeholder: 還沒有播放資訊時，也先開一個「連接中」的即時動態
     private func pushLiveActivity(placeholder: Bool = false, priority: LiveActivityManager.Priority = .routine) {
         guard let np = nowPlaying else {
@@ -918,8 +942,18 @@ final class AppModel {
         let model = LiveActivityContentBuilder.build(nowPlaying: np, lyrics: lyrics.state, display: lyricsDisplay,
                                                      songStart: songStartDate(), artworkFile: artworkFile,
                                                      nextLineAt: nextLineDate(), lineStartAt: lineStartDate(),
-                                                     position: songOverPosition())
+                                                     position: songOverPosition(), upcoming: upcomingLines())
         push(model, priority: priority)
+    }
+
+    /// 接下來幾句與各自的起訖真實時刻（更新被擋時畫面靠它算出正在唱的句子）
+    private func upcomingLines() -> [ActivityUpcomingLine]? {
+        guard !syncedLines.isEmpty, let pos = playback.engine.position(at: AppClock.now()) else { return nil }
+        let duration = playback.nowPlaying?.duration ?? 0
+        let songEnd = duration > 0 ? Date().addingTimeInterval(duration - pos) : nil
+        let lines = windowPolicy.upcoming(lines: syncedLines, currentIndex: lyricsDisplay.index,
+                                          effectivePosition: pos + totalOffset, now: Date(), songEnd: songEnd)
+        return lines.isEmpty ? nil : lines
     }
 
     /// 下一句開始的真實時刻（間奏倒數、逐句進度條的終點）
@@ -1113,7 +1147,10 @@ final class AppModel {
                           ("送出", "\(liveActivity.updateCount)"),
                           ("套用/被擋", "\(liveActivity.acceptedCount)/\(liveActivity.rejectedCount)"),
                           ("未驗證", "\(liveActivity.verifySkipped)"),
-                          ("背景被擋", liveActivity.backgroundBlocked ? "是" : nil),
+                          ("背景被擋", liveActivity.backgroundBlocked ? "是（每 \(Int(liveActivity.probeInterval)) 秒探測）" : nil),
+                          ("背景統計", liveActivity.cadence.summary),
+                          ("背景任務", liveActivity.lastGraceResult),
+                          ("開始時 CarPlay", liveActivity.startedInCar.map { R.yesNo($0) }),
                           ("staleDate", liveActivity.lastStaleInterval.map { "\(Int($0)) 秒後" }),
                           ("stale 次數", "\(liveActivity.staleCount)（推進 \(liveActivity.staleAdvanceCount)）"),
                           ("手動顯示", liveActivityCarOverride ? "是" : nil),

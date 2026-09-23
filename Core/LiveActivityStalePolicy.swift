@@ -39,6 +39,8 @@ struct LiveActivityStalePolicy: Equatable, Sendable {
         var kind: Kind
         var current: String
         var next: String
+        /// 目前句之後的視窗（各自帶起訖時刻，畫面放系統自己推進的進度條）；沒有視窗的內容是空的
+        var upcoming: [ActivityUpcomingLine] = []
     }
 
     static let openAppLine = "打開 CarLyrics 繼續同步歌詞"
@@ -65,18 +67,47 @@ struct LiveActivityStalePolicy: Equatable, Sendable {
         staleDate(for: m, now: now).timeIntervalSince(now)
     }
 
-    /// `isStale` 為 true 時畫面要顯示的內容（`now` = 畫面重畫的時刻）
+    /// `isStale` 為 true 時畫面要顯示的內容（`now` = 畫面重畫的時刻）。
+    /// 內容帶有視窗（`upcoming`）時，用視窗算出 `now` 正在唱哪一句；舊版內容只能推進一句。
     func display(for m: ActivityContentModel, now: Date) -> Display {
         if let end = m.songEnd, now >= end {
             return Display(kind: .songOver, current: Self.openAppLine, next: "")
         }
-        guard m.isPlaying, let next = Self.nextLineStart(m), now >= next else {
-            return Display(kind: .unchanged, current: m.currentLine, next: m.nextLine)
-        }
+        let window = m.upcoming ?? []
+        let unchanged = Display(kind: .unchanged, current: m.currentLine, next: m.nextLine, upcoming: window)
+        guard m.isPlaying else { return unchanged }
+        if !window.isEmpty { return windowDisplay(m, window: window, now: now, unchanged: unchanged) }
+        guard let next = Self.nextLineStart(m), now >= next else { return unchanged }
         if now < next.addingTimeInterval(advanceWindow) {
             // 下一句是間奏（空白句）時顯示 ♪，和正常更新時一樣
             return Display(kind: .advanced, current: m.nextLine.isEmpty ? "♪" : m.nextLine, next: m.nextLine2 ?? "")
         }
+        return Display(kind: .expired, current: Self.expiredLine, next: Self.openAppLine)
+    }
+
+    /// 有視窗：`now` 落在哪一句就顯示哪一句，之後的句子留在視窗裡（進度條由系統推進）
+    private func windowDisplay(_ m: ActivityContentModel, window: [ActivityUpcomingLine], now: Date,
+                               unchanged: Display) -> Display {
+        guard let i = window.lastIndex(where: { $0.startAt <= now }) else {
+            // 視窗第一句還沒開始：目前句唱完了就是間奏，否則維持原內容
+            if let next = Self.nextLineStart(m), now >= next {
+                return Display(kind: .advanced, current: "♪", next: window[0].text, upcoming: window)
+            }
+            return unchanged
+        }
+        let line = window[i]
+        let rest = Array(window[(i + 1)...])
+        // 這句的結束時刻：不知道時給推進時間窗的寬度
+        let end = line.endAt ?? line.startAt.addingTimeInterval(advanceWindow)
+        if now < end {
+            return Display(kind: .advanced, current: line.text.isEmpty ? "♪" : line.text,
+                           next: rest.first?.text ?? "", upcoming: rest)
+        }
+        if let following = rest.first {
+            // 這句唱完、下一句還沒開始：間奏
+            return Display(kind: .advanced, current: "♪", next: following.text, upcoming: rest)
+        }
+        // 視窗最後一句也唱完了：不知道唱到哪
         return Display(kind: .expired, current: Self.expiredLine, next: Self.openAppLine)
     }
 }

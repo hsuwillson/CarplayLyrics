@@ -10,6 +10,15 @@
 - 實測結果（驗證修正後，build 36，iOS 26.6.1，iPhone 15 Pro，接著 CarPlay、充電中）：**確認被擋**。進背景 3–13 秒後開始「沒有被系統套用」，連續 8 次後進入「背景被擋」，77 秒後即時動態變成 stale；回到前景立刻恢復（「恢復正常」）。App 內同步完全正確（最晚 0.2 秒）。Apple 文件（Displaying live data with Live Activities）說背景可以 update / end，但實際上只靠背景音訊活著的 App 更新會被丟掉。
 - 結論與做法（build 39）：$0 沒有背景更新的替代路徑（推播要伺服器與付費帳號），所以改成「開車模式」：接著 CarPlay 時讓 CarLyrics 留在前景（螢幕不自動關閉、可調暗），並把每次更新的 staleDate 設在「下一句開始 + 2 秒」——被擋時畫面到時自己把下一句升成目前句一次，播完改顯示「打開 CarLyrics」；CarPlay 小工具頁是鎖定後的備援（時間軸驅動，不受這個限制）。
 
+- 第七輪查證（2026-09-23，Apple 開發者論壇）：這不是頻率問題，是「執行理由」問題。論壇上有人從 Console 抓到
+  `liveactivitiesd: Process is only playing background media so is forbidden to update activity`（thread 748569），
+  Apple DTS 也回「背景更新只有推播是支援的做法，除非 App 在前景」（thread 776031）；另有 iOS 26.0.1 的 Loop（藍牙背景模式）
+  在螢幕關閉時本機更新照樣送到 CarPlay（thread 804483）。所以 build 40 做三件事來量清楚：
+  (1) 被擋期間的探測依 15→30→60→120 秒節奏調整並分級統計（`LiveActivityCadencePolicy`）；
+  (2) 每次更新帶接下來幾句的視窗與起訖時刻（`LiveActivityWindowPolicy`），畫面用系統推進的進度條標出唱到哪；
+  (3) 進背景時申請一次 `beginBackgroundTask`（約 25 秒），看有背景任務撐著時更新是否被套用。
+  結論看下一份實測紀錄的「背景送出」與「背景任務」兩行。
+
 ## 小工具「每句一個 timeline entry」
 
 - Apple 文件：timeline entry 之間應該至少約 5 分鐘。實測 CarPlay 小工具不會照幾秒一次的 entry 換句。

@@ -19,6 +19,10 @@ struct ActivityContentModel: Equatable, Sendable {
     /// 進度條在動＝即時動態還活著；停在滿格＝已經沒跟上
     var lineStartAt: Date?
     var lineEndAt: Date?
+    /// 接下來幾句與各自的起訖真實時刻（見 `LiveActivityWindowPolicy`）：
+    /// 更新被擋時畫面靠這個視窗在任何一次重畫時算出正在唱的句子，並用系統推進的進度條標出位置；
+    /// 舊版內容沒有 → nil
+    var upcoming: [ActivityUpcomingLine]?
 
     /// 逐句進度條的區間；暫停、沒有時刻或時刻不合理時 nil
     var lineProgressInterval: ClosedRange<Date>? {
@@ -53,7 +57,32 @@ struct ActivityContentModel: Equatable, Sendable {
         if nextLine2 != o.nextLine2 { return "nextLine2" }
         if !near(lineStartAt, o.lineStartAt) { return "lineStartAt" }
         if !near(lineEndAt, o.lineEndAt) { return "lineEndAt" }
+        let a = upcoming ?? [], b = o.upcoming ?? []
+        guard a.count == b.count else { return "upcoming" }
+        for (x, y) in zip(a, b) where x.text != y.text || !near(x.startAt, y.startAt) || !near(x.endAt, y.endAt) {
+            return "upcoming"
+        }
         return nil
+    }
+}
+
+/// 即時動態視窗裡的一句：文字 + 開始 / 結束的真實時刻（App 與小工具 extension 共用，存進 ContentState）
+struct ActivityUpcomingLine: Codable, Hashable, Sendable {
+    var text: String
+    var startAt: Date
+    /// 下一句（含空白句）開始的時刻或歌曲結束；不知道時 nil
+    var endAt: Date?
+
+    init(text: String, startAt: Date, endAt: Date? = nil) {
+        self.text = text
+        self.startAt = startAt
+        self.endAt = endAt
+    }
+
+    /// 系統自己推進的逐句進度條區間；沒有結束時刻或區間不合理時 nil
+    var progressInterval: ClosedRange<Date>? {
+        guard let endAt, endAt > startAt else { return nil }
+        return startAt...endAt
     }
 }
 
@@ -78,9 +107,11 @@ enum LiveActivityContentBuilder {
     ///   - nextLineAt: 下一句開始的真實時刻（間奏倒數、逐句進度條用）
     ///   - lineStartAt: 目前句開始的真實時刻（逐句進度條用）；未知時 nil
     ///   - position: 目前的歌曲位置（秒）；超過歌曲長度就顯示「等待下一首」，未知時 nil
+    ///   - upcoming: 接下來幾句的視窗（`LiveActivityWindowPolicy`）；沒有同步歌詞或播完時不會帶
     static func build(nowPlaying np: NowPlaying, lyrics: LyricsState, display: LyricsDisplay,
                       songStart: Date?, artworkFile: String?, nextLineAt: Date? = nil,
-                      lineStartAt: Date? = nil, position: TimeInterval? = nil) -> ActivityContentModel {
+                      lineStartAt: Date? = nil, position: TimeInterval? = nil,
+                      upcoming: [ActivityUpcomingLine]? = nil) -> ActivityContentModel {
         if let position, np.duration > 0, position >= np.duration {
             return ActivityContentModel(currentLine: songOverLine, nextLine: songOverHint, trackName: np.title,
                                         artistName: np.artist, isPlaying: np.isPlaying, artworkFile: artworkFile)
@@ -112,10 +143,12 @@ enum LiveActivityContentBuilder {
             guard np.isPlaying, !lines.isEmpty, current != "♪", let lineStartAt, let nextLineAt else { return nil }
             return (lineStartAt, nextLineAt)
         }()
+        // 視窗只在播放中、有同步歌詞、而且真的有接下來的句子時才帶（暫停時畫面不該自己推進）
+        let window = (np.isPlaying && !lines.isEmpty && !(upcoming ?? []).isEmpty) ? upcoming : nil
         return ActivityContentModel(currentLine: current, nextLine: next, trackName: np.title,
                                     artistName: np.artist, isPlaying: np.isPlaying,
                                     songStart: interval?.0, songEnd: interval?.1, artworkFile: artworkFile,
                                     nextLineAt: countdown, nextLine2: next2,
-                                    lineStartAt: lineRange?.0, lineEndAt: lineRange?.1)
+                                    lineStartAt: lineRange?.0, lineEndAt: lineRange?.1, upcoming: window)
     }
 }

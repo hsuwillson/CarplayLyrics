@@ -22,6 +22,8 @@ struct LyricsActivityAttributes: ActivityAttributes {
         /// 目前句的起訖真實時刻（逐句進度條由系統自己推進；舊版內容沒有 → nil）
         var lineStartAt: Date?
         var lineEndAt: Date?
+        /// 接下來幾句與起訖時刻（更新被擋時畫面靠它算出正在唱的句子；舊版內容沒有 → nil）
+        var upcoming: [ActivityUpcomingLine]?
 
         init(_ m: ActivityContentModel) {
             currentLine = m.currentLine
@@ -36,13 +38,15 @@ struct LyricsActivityAttributes: ActivityAttributes {
             nextLine2 = m.nextLine2
             lineStartAt = m.lineStartAt
             lineEndAt = m.lineEndAt
+            upcoming = m.upcoming
         }
 
         var model: ActivityContentModel {
             ActivityContentModel(currentLine: currentLine, nextLine: nextLine, trackName: trackName,
                                  artistName: artistName, isPlaying: isPlaying, songStart: songStart,
                                  songEnd: songEnd, artworkFile: artworkFile, nextLineAt: nextLineAt,
-                                 nextLine2: nextLine2, lineStartAt: lineStartAt, lineEndAt: lineEndAt)
+                                 nextLine2: nextLine2, lineStartAt: lineStartAt, lineEndAt: lineEndAt,
+                                 upcoming: upcoming)
         }
 
         /// 間奏倒數的區間（沒有或已經過了就是 nil）

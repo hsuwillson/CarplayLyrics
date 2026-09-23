@@ -163,7 +163,15 @@ struct DiagnosticsView: View {
             LabeledContent("系統套用 / 被擋", value: "\(model.liveActivity.acceptedCount) / \(model.liveActivity.rejectedCount)")
             LabeledContent("未驗證", value: "\(model.liveActivity.verifySkipped)")
             if model.liveActivity.backgroundBlocked {
-                LabeledContent("背景更新", value: "被擋（每 15 秒探測一次）")
+                LabeledContent("背景更新", value: "被擋（每 \(Int(model.liveActivity.probeInterval)) 秒探測一次）")
+            }
+            LabeledContent("背景送出（套用/送出）", value: model.liveActivity.cadence.summary)
+                .font(.caption)
+            if let grace = model.liveActivity.lastGraceResult {
+                LabeledContent("進背景的背景任務", value: grace).font(.caption)
+            }
+            if let inCar = model.liveActivity.startedInCar {
+                LabeledContent("開始時 CarPlay", value: inCar ? "已連接" : "未連接")
             }
             if let interval = model.liveActivity.lastStaleInterval {
                 LabeledContent("staleDate", value: "送出後 \(Int(interval)) 秒（下一句 + 寬限）")
@@ -185,10 +193,11 @@ struct DiagnosticsView: View {
             if let error = model.liveActivity.lastError {
                 LabeledContent("最近錯誤", value: error).font(.caption)
             }
+            Button("結束並重新開始即時動態") { model.restartLiveActivity() }
         } header: {
             Text("即時動態")
         } footer: {
-            Text("「未驗證」= 送出後 2 秒內又有新內容，來不及確認系統有沒有套用（歌詞密集時很常見，不是問題）。「被擋」多發生在 App 不在螢幕上時：iOS 會拒絕背景送出的更新，所以開車時請讓 CarLyrics 留在前景。stale = 超過 staleDate 沒更新，畫面會自己把下一句升成目前句一次。iOS 最多讓即時動態持續 8 小時；長途中途打開 App 時會自動換新。")
+            Text("「未驗證」= 送出後 2 秒內又有新內容，來不及確認系統有沒有套用（歌詞密集時很常見，不是問題）。「被擋」多發生在 App 不在螢幕上時：iOS 會拒絕只靠背景音訊執行的 App 在背景送出的更新，所以開車時請讓 CarLyrics 留在前景。被擋期間會依 15→30→60→120 秒的節奏探測，「背景送出」列出每種間隔被套用的次數。stale = 超過 staleDate 沒更新，畫面會依送出的視窗自己推進一次，之後靠每句底下的進度條。「結束並重新開始」用來測試 CarPlay 儀表板是否只顯示連上車之後才開始的即時動態。iOS 最多讓即時動態持續 8 小時；長途中途打開 App 時會自動換新。")
         }
     }
 

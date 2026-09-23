@@ -3,11 +3,12 @@ import SwiftUI
 import WidgetKit
 
 /// 歌詞即時動態（只顯示歌詞：播放控制交給鎖定畫面上的 Spotify）
-/// - stale（App 在背景時 iOS 擋掉更新、或 App 被終止）：依 `LiveActivityStalePolicy` 自己推進到下一句一次，
-///   播完後改顯示「打開 CarLyrics」，不把舊歌詞當成正在唱的
-/// - 鎖定畫面：一行小字歌名 + 目前句（大字、最多三行）+ 細的逐句進度條（系統自己推進，
-///   在動就代表即時動態還活著）+ 下一句 + 再下一句
-/// - CarPlay / Apple Watch：`.small` activity family（iOS 26 CarPlay 使用這個尺寸），目前句 + 下一句 + 細進度條
+/// - 每次更新都帶接下來幾句的視窗（`upcoming`，各自有起訖時刻）：每句底下一條系統自己推進的細進度條，
+///   App 的更新被擋時（鎖定後 iOS 擋掉背景更新）沒有任何更新也看得出唱到哪一句
+/// - stale（超過 staleDate 沒更新）：依 `LiveActivityStalePolicy` 用視窗算出那一刻正在唱的句子並升成目前句
+///   （只會重畫這一次），播完後改顯示「打開 CarLyrics」，不把舊歌詞當成正在唱的
+/// - 鎖定畫面：一行小字歌名 + 目前句（大字、最多三行）+ 細的逐句進度條 + 接下來最多三句（各帶進度條）
+/// - CarPlay / Apple Watch：`.small` activity family（iOS 26 CarPlay 使用這個尺寸），目前句 + 接下來最多兩句 + 細進度條
 /// - 動態島：只放一個小圖示。即時動態進行中時系統一定會佔用動態島，無法關閉，
 ///   所以這裡刻意不放歌詞、不放按鈕，把佔用面積壓到最小；沒在播放時會自動收起（見 IdlePolicy）
 struct LyricsLiveActivity: Widget {
@@ -121,12 +122,19 @@ private struct TimerBar: View {
 /// 背景更新被系統暫停時的說明
 private let staleMessage = "歌詞未更新 · 打開 CarLyrics"
 
+/// 接下來的一句：文字 + 系統自己推進的進度條區間（沒有時刻的舊內容是 nil）
+private struct ShownRow {
+    let text: String
+    let interval: ClosedRange<Date>?
+}
+
 /// 畫面實際要顯示的句子：正常時就是送出的內容；stale 時依 `LiveActivityStalePolicy` 決定
-/// （下一句已開始 → 升成目前句；播完 → 「打開 CarLyrics」）。`now` 是這次重畫的時刻。
+/// （用視窗算出 `now` 正在唱的句子並升成目前句；播完 → 「打開 CarLyrics」）。`now` 是這次重畫的時刻。
 private struct ShownLyrics {
     let current: String
     let next: String
-    let next2: String?
+    /// 目前句之後的句子（視窗有的話帶進度條區間）
+    let rows: [ShownRow]
     let isStale: Bool
     let staleKind: LiveActivityStalePolicy.Display.Kind?
 
@@ -136,14 +144,32 @@ private struct ShownLyrics {
             let d = LiveActivityStalePolicy().display(for: state.model, now: now)
             current = d.current
             next = d.next
-            next2 = nil
             staleKind = d.kind
+            switch d.kind {
+            case .songOver, .expired:
+                rows = []
+            case .advanced, .unchanged:
+                rows = d.upcoming.isEmpty ? Self.textRows(next: d.next, next2: nil) : d.upcoming.map(Self.row)
+            }
         } else {
             current = state.currentLine
             next = state.nextLine
-            next2 = state.nextLine2
             staleKind = nil
+            let window = state.upcoming ?? []
+            rows = window.isEmpty ? Self.textRows(next: state.nextLine, next2: state.nextLine2) : window.map(Self.row)
         }
+    }
+
+    private static func row(_ line: ActivityUpcomingLine) -> ShownRow {
+        ShownRow(text: line.text, interval: line.progressInterval)
+    }
+
+    /// 沒有視窗（舊內容、沒有同步歌詞）：只有文字
+    private static func textRows(next: String, next2: String?) -> [ShownRow] {
+        var rows: [ShownRow] = []
+        if !next.isEmpty { rows.append(ShownRow(text: next, interval: nil)) }
+        if let next2, !next2.isEmpty { rows.append(ShownRow(text: next2, interval: nil)) }
+        return rows
     }
 
     /// stale 提示：播完時已經把「打開 CarLyrics」放在目前句，就不重複
@@ -227,39 +253,69 @@ private struct LyricsActivityView: View {
     }
 }
 
-/// CarPlay 儀表板 / Apple Watch：字要大，只放目前句 + 下一句
+/// 接下來的一句 + 底下一條系統自己推進的細進度條（區間過了就是滿格、還沒到就是空的：
+/// 沒有任何更新也看得出唱到哪一句）
+private struct UpcomingRow: View {
+    let row: ShownRow
+    let font: Font
+    var color: Color = .secondary
+    var barHeight: CGFloat = 2
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(row.text)
+                .font(font)
+                .foregroundStyle(color)
+                .lineLimit(1)
+            if let interval = row.interval {
+                TimerBar(interval: interval, tint: .secondary)
+                    .frame(height: barHeight)
+            }
+        }
+    }
+}
+
+/// CarPlay 儀表板 / Apple Watch：字要大，目前句 + 接下來最多兩句（放不下就少列，不要被截掉）
 private struct SmallActivityView: View {
     let state: LyricsActivityAttributes.ContentState
     let isStale: Bool
 
     var body: some View {
         let shown = ShownLyrics(state: state, isStale: isStale)
+        ViewThatFits(in: .vertical) {
+            layout(shown, rows: 2)
+            layout(shown, rows: 1)
+            layout(shown, rows: 0)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(10)
+    }
+
+    private func layout(_ shown: ShownLyrics, rows: Int) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             ActivityProgress(state: state)
                 .frame(height: 4)
             CurrentLineView(state: state, shown: shown, font: .system(size: 22, weight: .bold, design: .rounded))
-            Spacer(minLength: 0)
             if let hint = shown.staleHint {
-                // 只放一行橘色提示（高度和平常一樣），讓駕駛一眼看出這不是即時的
+                // 一行橘色提示，讓駕駛一眼看出這不是即時的
                 Label(hint, systemImage: "exclamationmark.triangle.fill")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.orange)
                     .lineLimit(1)
-            } else if !shown.next.isEmpty {
-                HStack(spacing: 5) {
-                    if !state.isPlaying {
+            }
+            ForEach(Array(shown.rows.prefix(rows).enumerated()), id: \.offset) { i, row in
+                HStack(alignment: .top, spacing: 5) {
+                    if i == 0, !state.isPlaying {
                         Image(systemName: "pause.fill")
                             .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
                     }
-                    Text(shown.next)
-                        .font(.system(size: 14))
-                        .lineLimit(1)
+                    UpcomingRow(row: row, font: .system(size: 14),
+                                color: i == 0 ? Color.secondary : Color.secondary.opacity(0.7))
                 }
-                .foregroundStyle(.secondary)
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 }
 
@@ -279,17 +335,10 @@ private struct LockScreenActivityView: View {
                 LineProgress(state: state)
                     .frame(height: 3)
             }
-            if !shown.next.isEmpty {
-                Text(shown.next)
-                    .font(.headline)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                if let next2 = shown.next2, !next2.isEmpty {
-                    Text(next2)
-                        .font(.subheadline)
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                }
+            // 接下來最多三句，各帶一條系統推進的細進度條：鎖定後更新被擋，也看得出唱到哪一句
+            ForEach(Array(shown.rows.prefix(3).enumerated()), id: \.offset) { i, row in
+                UpcomingRow(row: row, font: i == 0 ? .headline : .subheadline,
+                            color: i == 0 ? Color.secondary : Color.secondary.opacity(0.6))
             }
             if let hint = shown.staleHint {
                 Text(hint)

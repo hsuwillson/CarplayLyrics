@@ -17,11 +17,11 @@ final class ScreenDimmer {
         // 最常見的情況（沒要調暗、也沒調暗過）不用去找 scene
         guard target != nil || savedBrightness != nil, let screen = Self.screen() else { return }
         if let target {
+            // 只在進入時調一次：之後使用者自己把亮度調高，不要每次輪詢又把它壓回去
+            guard savedBrightness == nil else { return }
             let value = CGFloat(min(1, max(0, target)))
-            if savedBrightness == nil {
-                savedBrightness = screen.brightness
-                debugLog(String(format: "開車模式：螢幕調暗 %.0f%% → %.0f%%", screen.brightness * 100, value * 100))
-            }
+            savedBrightness = screen.brightness
+            debugLog(String(format: "開車模式：螢幕調暗 %.0f%% → %.0f%%", screen.brightness * 100, value * 100))
             if abs(screen.brightness - value) > 0.01 { screen.brightness = value }
         } else if let saved = savedBrightness {
             savedBrightness = nil

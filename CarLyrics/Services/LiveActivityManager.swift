@@ -8,8 +8,12 @@ import UIKit
 /// - 更新依序送出（串成一條鏈），避免較舊的內容最後才到
 /// - 每次更新帶 staleDate = 下一句開始 + 寬限（見 LiveActivityStalePolicy）：背景更新被擋時，
 ///   畫面到時會自己把下一句升成目前句一次並標示「歌詞未更新」；播完後改顯示「打開 CarLyrics」
-/// - iOS 會擋掉只播背景音訊的 App 在背景的更新：連續被擋 8 次後，背景只在換歌 / 暫停時嘗試，
-///   但每隔 15 秒仍放一次換句更新出去探測；一被套用就恢復逐句更新（系統只是慢、不是拒絕時能自癒）
+/// - iOS 會擋掉只播背景音訊的 App 在背景的更新（liveactivitiesd：「only playing background media … forbidden」）：
+///   連續被擋 8 次後進入「被擋」，背景只在換歌 / 暫停時嘗試，另外依 `LiveActivityCadencePolicy` 的節奏
+///   （15 → 30 → 60 → 120 秒，被套用就加快）放探測出去；每一級的套用 / 被擋都分開統計，
+///   讓實測紀錄能分辨「一律禁止」還是「太密才被擋」。每次送出的內容都帶接下來幾句的視窗，
+///   疏疏的探測被套用時畫面也是對的那一段
+/// - 剛進背景時申請一段背景任務（約 25 秒）：測試「只有背景音訊」以外的執行理由是否讓系統放行更新
 /// - 接近 8 小時上限且 App 在前景時，自動重新開始一個
 @MainActor
 final class LiveActivityManager {
@@ -44,8 +48,25 @@ final class LiveActivityManager {
     private(set) var backgroundBlocked = false
     private var backgroundRejectStreak = 0
     private var loggedRejectionStreak = false
-    private let policy = LiveActivityUpdatePolicy()
+    private var policy = LiveActivityUpdatePolicy()
     let stalePolicy = LiveActivityStalePolicy()
+    /// 背景被擋期間的探測節奏與各級統計（診斷用 `cadence.summary`）
+    private(set) var cadence = LiveActivityCadencePolicy()
+    /// 目前的探測間隔（秒）
+    var probeInterval: TimeInterval { policy.blockedProbeInterval }
+    /// 由 AppModel 維護：現在接著車用音訊嗎（開始即時動態時記進紀錄，看得出是上車前還是上車後開始的）
+    var carConnected = false
+    /// 目前這個即時動態是在接著車用音訊時開始的嗎（nil = 沒有即時動態）
+    private(set) var startedInCar: Bool?
+    /// 進背景後的背景任務（實驗：有背景任務時系統是否放行更新）
+    private var graceTask = UIBackgroundTaskIdentifier.invalid
+    private var graceTimer: Task<Void, Never>?
+    private var graceStartedAt: Date?
+    private var graceCounts: (accepted: Int, rejected: Int) = (0, 0)
+    /// 最近一次背景任務期間的結果（診斷用）
+    private(set) var lastGraceResult: String?
+    /// 背景任務最多撐這麼久就自己結束（系統給的多半是 30 秒左右）
+    var graceSeconds: TimeInterval = 25
     /// 最近一次送出時選的 staleDate 距離當時幾秒（診斷用）
     private(set) var lastStaleInterval: TimeInterval?
     /// 系統把即時動態標成 stale 的次數；其中「下一句已開始 → 畫面自己推進」的次數
@@ -68,7 +89,7 @@ final class LiveActivityManager {
     var stateDescription: String {
         guard let activity else { return startBlockedUntilForeground ? "未啟動（等回到前景）" : "未啟動" }
         switch activity.activityState {
-        case .active: return backgroundBlocked ? "進行中（背景更新被系統暫停）" : "進行中"
+        case .active: return backgroundBlocked ? "進行中（背景更新被系統擋住，每 \(Int(probeInterval)) 秒探測）" : "進行中"
         case .stale:
             return backgroundBlocked ? "畫面停在上次套用的內容（背景更新被系統擋住）" : "暫停更新（等下一次更新）"
         case .ended: return "已結束"
@@ -83,8 +104,9 @@ final class LiveActivityManager {
 
     /// App 回到前景：解除封鎖、接手既有的即時動態、必要時換新
     func appBecameActive() {
+        endGrace(reason: "回到前景")
         startBlockedUntilForeground = false
-        if backgroundBlocked { debugLog("回到前景，恢復即時動態更新") }
+        if backgroundBlocked { debugLog("回到前景，恢復即時動態更新（背景統計：\(cadence.summary)）") }
         backgroundBlocked = false
         backgroundRejectStreak = 0
         let existing = Activity<LyricsActivityAttributes>.activities
@@ -94,7 +116,8 @@ final class LiveActivityManager {
             // 不知道它是什麼時候開始的：保守當成現在，8 小時換新的時間從這裡起算
             startedAt = Date()
             observe(first)
-            debugLog("接手既有的即時動態")
+            startedInCar = nil
+            debugLog("接手既有的即時動態（狀態 \(first.activityState)，CarPlay \(carConnected ? "已連接" : "未連接")）")
         }
         for extra in existing where extra.id != activity?.id {
             Task { await extra.end(nil, dismissalPolicy: .immediate) }
@@ -103,6 +126,45 @@ final class LiveActivityManager {
             end(reason: "接近 8 小時上限，自動換新")
             start(state)
         }
+    }
+
+    /// App 進入背景：申請一段背景任務。iOS 擋掉的是「只有背景音訊」的程序（liveactivitiesd 的紀錄原文），
+    /// 有背景任務撐著的這 25 秒若更新被套用，就證實是執行理由的問題、而不是頻率；
+    /// 也順便讓鎖定後的前幾句還能更新。系統到期或時間到就結束，不會延長背景執行
+    func appEnteredBackground() {
+        guard isActive, graceTask == .invalid else { return }
+        // expirationHandler 是 @MainActor @Sendable（系統在主執行緒同步呼叫）
+        let id = UIApplication.shared.beginBackgroundTask(withName: "CarLyrics.LiveActivityGrace") { [weak self] in
+            self?.endGrace(reason: "系統到期")
+        }
+        guard id != .invalid else {
+            debugLog("背景任務：系統不給（即時動態更新只靠背景音訊）")
+            return
+        }
+        graceTask = id
+        graceStartedAt = Date()
+        graceCounts = (acceptedCount, rejectedCount)
+        debugLog("背景任務：開始（最多 \(Int(graceSeconds)) 秒，觀察這段時間的即時動態更新是否被套用）")
+        graceTimer?.cancel()
+        graceTimer = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(self?.graceSeconds ?? 25))
+            guard !Task.isCancelled else { return }
+            self?.endGrace(reason: "時間到")
+        }
+    }
+
+    private func endGrace(reason: String) {
+        graceTimer?.cancel()
+        graceTimer = nil
+        guard graceTask != .invalid else { return }
+        let id = graceTask
+        graceTask = .invalid
+        UIApplication.shared.endBackgroundTask(id)
+        let seconds = graceStartedAt.map { Int(Date().timeIntervalSince($0)) } ?? 0
+        let accepted = acceptedCount - graceCounts.accepted
+        let rejected = rejectedCount - graceCounts.rejected
+        lastGraceResult = "\(seconds) 秒：套用 \(accepted)／被擋 \(rejected)（\(reason)）"
+        debugLog("背景任務：結束（\(lastGraceResult ?? "")）")
     }
 
     func update(_ model: ActivityContentModel, priority: Priority = .routine) {
@@ -142,11 +204,13 @@ final class LiveActivityManager {
     }
 
     /// 內容沒變也定期重送，避免被標成 stale（由輪詢迴圈呼叫）。
-    /// 背景被擋期間也照送（送的是累積的最新內容）：間隔（45 秒）比探測間隔長，本身就是一次探測，
-    /// 被套用就解除封鎖；不送的話長間奏時會被標成 stale、畫面變成「歌詞沒跟上」。
+    /// 背景被擋期間也照送（送的是累積的最新內容），算成一次探測；
+    /// 不送的話長間奏時會被標成 stale、畫面變成「歌詞沒跟上」。
     func keepAlive() {
+        // 被擋期間照節奏政策的間隔來（放慢到 60 / 120 秒時，不要被 45 秒的 keep-alive 蓋掉）
+        let interval = backgroundBlocked && isInBackground ? max(keepAliveInterval, probeInterval) : keepAliveInterval
         guard isActive, let activity, let state = pendingState ?? lastState,
-              secondsSinceLastSend > keepAliveInterval else { return }
+              secondsSinceLastSend > interval else { return }
         send(state, to: activity)
     }
 
@@ -166,6 +230,7 @@ final class LiveActivityManager {
         self.activity = nil
         lastState = nil
         pendingState = nil
+        startedInCar = nil
         let previous = chain
         chain = Task {
             await previous?.value
@@ -186,13 +251,20 @@ final class LiveActivityManager {
         // 送出當下是不是在背景：驗證要等 2 秒，期間可能剛好鎖了螢幕，
         // 前景送的更新不能因為驗證時已在背景就算成「背景被擋」
         let background = isInBackground
+        // 被擋期間送出的都是探測（換句探測、換歌、keep-alive）：算進目前這一級的統計
+        let probe = background && backgroundBlocked
+        if probe {
+            cadence.recordProbeSent()
+        } else if background {
+            cadence.recordPerLineSent()
+        }
         let content = ActivityContent(state: state, staleDate: staleDate(for: state, now: now))
         let previous = chain
         chain = Task { [weak self] in
             await previous?.value
             await activity.update(content)
             // 驗證不放進鏈裡：它要等一下才準，放進來會拖慢下一次更新
-            self?.scheduleVerify(state, on: activity, background: background)
+            self?.scheduleVerify(state, on: activity, background: background, probe: probe)
         }
     }
 
@@ -200,19 +272,20 @@ final class LiveActivityManager {
     /// 立刻比對會把正常的更新誤判成「被系統擋住」，進而關掉逐句更新（歌詞就不動了）。
     /// 所以延遲一下再比，不一致時再給一次機會；期間若已送出（或記住）更新的內容，
     /// 這次就不算，只記一筆「未驗證」。
-    private func scheduleVerify(_ state: State, on activity: Activity<LyricsActivityAttributes>, background: Bool) {
+    private func scheduleVerify(_ state: State, on activity: Activity<LyricsActivityAttributes>, background: Bool,
+                                probe: Bool) {
         verifyTask?.cancel()
         verifyTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 800_000_000)
             guard !Task.isCancelled, let self, self.lastState == state else { self?.verifySkipped += 1; return }
             if self.applied(state, on: activity) {
-                self.record(mismatch: nil, background: background)
+                self.record(mismatch: nil, background: background, probe: probe, latency: 0.8)
                 return
             }
             try? await Task.sleep(nanoseconds: 1_200_000_000)
             guard !Task.isCancelled, self.lastState == state else { self.verifySkipped += 1; return }
             self.record(mismatch: activity.content.state.model.mismatchField(comparedTo: state.model),
-                        background: background)
+                        background: background, probe: probe, latency: 2.0)
         }
     }
 
@@ -228,15 +301,15 @@ final class LiveActivityManager {
     }
 
     /// 比對結果 → 統計與「背景是否被擋」的判斷（只記錄次數，不記錄歌詞）
-    /// - Parameter background: 送出當下是否在背景（不是驗證當下）
-    private func record(mismatch: String?, background: Bool) {
-        if mismatch == nil {
+    /// - Parameters:
+    ///   - background: 送出當下是否在背景（不是驗證當下）
+    ///   - probe: 送出當下是被擋期間的探測（算進節奏統計）
+    ///   - latency: 送出後幾秒驗證到結果
+    private func record(mismatch: String?, background: Bool, probe: Bool, latency: TimeInterval) {
+        let accepted = mismatch == nil
+        if accepted {
             acceptedCount += 1
             backgroundRejectStreak = 0
-            if backgroundBlocked {
-                backgroundBlocked = false
-                debugLog("即時動態背景更新恢復")
-            }
             if loggedRejectionStreak {
                 loggedRejectionStreak = false
                 debugLog("即時動態更新恢復正常（\(background ? "背景" : "前景")）")
@@ -245,20 +318,48 @@ final class LiveActivityManager {
             rejectedCount += 1
             lastRejectedAt = Date()
             lastMismatchField = mismatch
-            if background {
-                backgroundRejectStreak += 1
-                if policy.shouldEnterBlocked(backgroundRejectStreak: backgroundRejectStreak), !backgroundBlocked {
-                    backgroundBlocked = true
-                    debugLog("即時動態背景更新被系統擋住，改為只在換歌 / 暫停時嘗試（每 \(Int(policy.blockedProbeInterval)) 秒探測一次）")
-                }
-            }
             if !loggedRejectionStreak {
                 loggedRejectionStreak = true
                 debugLog("即時動態更新沒有被系統套用（\(background ? "背景" : "前景")）")
             }
         }
+        if probe {
+            recordProbe(accepted: accepted, latency: latency)
+        } else if background {
+            cadence.recordPerLine(accepted: accepted, latency: latency)
+            if !accepted {
+                backgroundRejectStreak += 1
+                if policy.shouldEnterBlocked(backgroundRejectStreak: backgroundRejectStreak), !backgroundBlocked {
+                    backgroundBlocked = true
+                    cadence.enterBlocked()
+                    policy.blockedProbeInterval = cadence.interval
+                    debugLog("即時動態背景更新被系統擋住，改為只在換歌 / 暫停時嘗試，每 \(Int(cadence.interval)) 秒探測一次（每次都帶接下來幾句的視窗）")
+                }
+            }
+        }
         if (acceptedCount + rejectedCount) % 50 == 0 {
-            debugLog("即時動態統計：套用 \(acceptedCount)、被擋 \(rejectedCount)")
+            debugLog("即時動態統計：套用 \(acceptedCount)、被擋 \(rejectedCount)；背景：\(cadence.summary)")
+        }
+    }
+
+    /// 被擋期間的探測結果：依節奏政策放慢 / 加快，最快一級也穩定被套用才恢復逐句
+    private func recordProbe(accepted: Bool, latency: TimeInterval) {
+        // 驗證期間可能已回到前景並解除封鎖：那就只記統計，不再調節奏
+        let change = cadence.record(accepted: accepted, latency: latency)
+        guard backgroundBlocked else { return }
+        switch change {
+        case .none:
+            break
+        case .slower(let interval):
+            policy.blockedProbeInterval = interval
+            debugLog("即時動態背景探測仍被擋，放慢到每 \(Int(interval)) 秒（\(cadence.summary)）")
+        case .faster(let interval):
+            policy.blockedProbeInterval = interval
+            debugLog("即時動態背景探測被套用，加快到每 \(Int(interval)) 秒（\(cadence.summary)）")
+        case .resumePerLine:
+            backgroundBlocked = false
+            backgroundRejectStreak = 0
+            debugLog("即時動態背景更新恢復逐句（\(cadence.summary)）")
         }
     }
 
@@ -280,8 +381,9 @@ final class LiveActivityManager {
             startedAt = now
             lastUpdateAt = now
             lastError = nil
+            startedInCar = carConnected
             observe(new)
-            debugLog("即時動態已開始（staleDate \(Int(lastStaleInterval ?? 0)) 秒後）")
+            debugLog("即時動態已開始（staleDate \(Int(lastStaleInterval ?? 0)) 秒後；CarPlay \(carConnected ? "已連接" : "未連接")；\(isInBackground ? "背景" : "前景")）")
         } catch {
             startBlockedUntilForeground = true
             lastError = error.localizedDescription
@@ -323,6 +425,7 @@ final class LiveActivityManager {
                         self.activity = nil
                         self.lastState = nil
                         self.pendingState = nil
+                        self.startedInCar = nil
                         // 背景時無法重新開始，等回到前景；前景則可以立刻換新
                         self.startBlockedUntilForeground = self.isInBackground
                     }
