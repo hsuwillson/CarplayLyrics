@@ -240,13 +240,13 @@ jobs:
           # 備用網址：有些網路連不到 raw.githubusercontent.com，改用 github.com 的 release 資產
           gh release upload latest-build altstore/apps.json --clobber
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v6
         with:
           name: CarLyrics-ipa
           path: CarLyrics.ipa
           retention-days: 14
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v6
         if: always()
         with:
           name: xcodebuild-log
