@@ -139,3 +139,52 @@ final class WidgetReloadPolicyTests: XCTestCase {
         XCTAssertFalse(p.allowLineReload(now: t, isForeground: false, renderCount: 0))
     }
 }
+
+final class PollSurfaceTests: XCTestCase {
+    func testSteadyIntervalBySurface() {
+        let p = PollPolicy()
+        let playing = PollOutcome.playing(isPlaying: true, remaining: 100)
+        XCTAssertEqual(p.delay(for: playing, surface: .foreground), 2.5)
+        XCTAssertEqual(p.delay(for: playing, surface: .visible), 5)
+        XCTAssertEqual(p.delay(for: playing, surface: .hidden), 15)
+        XCTAssertEqual(p.delay(for: playing, surface: .hidden, hot: true), 2.5)
+        // 接近結尾：任何模式都提早問
+        XCTAssertEqual(p.delay(for: .playing(isPlaying: true, remaining: 4), surface: .hidden), 4.4, accuracy: 0.001)
+        let c = PollPolicy(constrained: true)
+        XCTAssertEqual(c.delay(for: playing, surface: .visible), 8)
+        XCTAssertEqual(c.delay(for: playing, surface: .hidden), 20)
+    }
+
+    func testIdleBackoff() {
+        let p = PollPolicy()
+        XCTAssertEqual(p.pausedDelay(idleFor: 0), 5)
+        XCTAssertEqual(p.pausedDelay(idleFor: 300), 10)
+        XCTAssertEqual(p.pausedDelay(idleFor: 900), 20)
+        XCTAssertEqual(p.delay(for: .nothing(streak: 3), idleFor: 60), 10)
+        XCTAssertEqual(p.delay(for: .nothing(streak: 3), idleFor: 200), 30)
+        XCTAssertEqual(p.delay(for: .nonMusic, idleFor: 60), 5)
+        XCTAssertEqual(p.delay(for: .nonMusic, idleFor: 400), 10)
+    }
+
+    func testActivityEndThresholds() {
+        let idle = IdlePolicy()
+        let t0 = Date(timeIntervalSince1970: 0)
+        XCTAssertEqual(idle.activityEndDelay(for: .nothing), 30)
+        XCTAssertEqual(idle.activityEndDelay(for: .nothing, carConnected: true), 300)
+        XCTAssertNil(idle.activityEndDelay(for: .nonMusic))
+        XCTAssertFalse(idle.shouldEndActivity(kind: .nothing, since: t0, now: t0.addingTimeInterval(100), hasPlayed: false))
+        XCTAssertTrue(idle.shouldEndActivity(kind: .nothing, since: t0, now: t0.addingTimeInterval(100)))
+    }
+
+    func testHotWindow() {
+        var s = PlaybackState()
+        let t0 = Date(timeIntervalSince1970: 1000)
+        XCTAssertFalse(s.isHot(now: t0))
+        s.markHot(at: t0)
+        XCTAssertTrue(s.isHot(now: t0.addingTimeInterval(5)))
+        XCTAssertFalse(s.isHot(now: t0.addingTimeInterval(11)))
+        XCTAssertEqual(s.idleDuration(now: t0), 0)
+        s.markIdle(.paused, at: t0)
+        XCTAssertEqual(s.idleDuration(now: t0.addingTimeInterval(7)), 7)
+    }
+}

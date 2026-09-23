@@ -100,7 +100,7 @@ final class LiveActivityManager {
                                            backgroundBlocked: backgroundBlocked,
                                            isInBackground: isInBackground,
                                            priority: priority,
-                                           sameAsLast: state == lastState))
+                                           sameAsLast: isSameAsLast(state)))
         switch decision {
         case .start:
             activity = nil
@@ -116,6 +116,13 @@ final class LiveActivityManager {
         case .skip:
             break
         }
+    }
+
+    /// 內容相同就不送：時間欄位（歌曲開始時刻、下一句時刻）每次重算會差幾毫秒，
+    /// 用完全相等比較幾乎永遠不同，會多送很多次一樣的畫面
+    private func isSameAsLast(_ state: State) -> Bool {
+        guard let lastState else { return false }
+        return state.model.isEquivalent(to: lastState.model, tolerance: 0.5)
     }
 
     /// 內容沒變也定期重送，避免被標成 stale（由輪詢迴圈呼叫）

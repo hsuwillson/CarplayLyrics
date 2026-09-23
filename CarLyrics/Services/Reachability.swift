@@ -6,7 +6,7 @@ import Network
 final class Reachability {
     private let monitor = NWPathMonitor()
     private(set) var isOnline = true
-    /// Wi-Fi（不計流量）：可以放心預先載入整個播放佇列
+    /// Wi-Fi（不計流量、也沒開「低數據模式」）：可以放心預先載入整個播放佇列
     private(set) var isWiFi = false
     /// 網路狀態改變（true = 恢復連線）
     var onChange: ((Bool) -> Void)?
@@ -14,7 +14,7 @@ final class Reachability {
     func start() {
         monitor.pathUpdateHandler = { [weak self] path in
             let online = path.status == .satisfied
-            let wifi = online && path.usesInterfaceType(.wifi) && !path.isExpensive
+            let wifi = online && path.usesInterfaceType(.wifi) && !path.isExpensive && !path.isConstrained
             Task { @MainActor in
                 guard let self else { return }
                 self.isWiFi = wifi

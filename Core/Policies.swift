@@ -22,10 +22,41 @@ struct PollPolicy: Equatable, Sendable {
     /// 低耗電模式或過熱：放慢輪詢
     var constrained = false
 
+    /// 使用者現在看得到什麼（決定要多即時）
+    enum Surface: Equatable, Sendable {
+        /// App 在前景
+        case foreground
+        /// 背景，但鎖定畫面 / CarPlay 的即時動態正常更新，或連著車用音訊
+        case visible
+        /// 背景，而且沒有任何會即時更新的畫面（即時動態被擋或沒開）
+        case hidden
+    }
+
     var playingInterval: TimeInterval { constrained ? 5 : 2.5 }
     var pausedInterval: TimeInterval { constrained ? 10 : 5 }
 
-    func delay(for outcome: PollOutcome, quotaActive: Bool = false, preferFullPlayer: Bool = false) -> TimeInterval {
+    /// 歌曲進行中、沒有剛發生的變化時的間隔：位置可以自己推算，輪詢只是為了發現暫停 / 跳歌 / 拖動
+    func steadyInterval(for surface: Surface) -> TimeInterval {
+        switch surface {
+        case .foreground: return playingInterval
+        case .visible: return constrained ? 8 : 5
+        case .hidden: return constrained ? 20 : 15
+        }
+    }
+
+    /// 暫停越久問得越少（剛暫停常常馬上繼續，久了多半是真的停了）
+    func pausedDelay(idleFor: TimeInterval) -> TimeInterval {
+        if idleFor < 120 { return pausedInterval }
+        if idleFor < 600 { return pausedInterval * 2 }
+        return pausedInterval * 4
+    }
+
+    /// - Parameters:
+    ///   - surface: 使用者看得到什麼；預設前景（最即時）
+    ///   - hot: 剛發生換歌 / 拖動 / 暫停 / 操作後的一小段時間，維持最快的頻率
+    ///   - idleFor: 暫停 / 沒在播放已經多久
+    func delay(for outcome: PollOutcome, quotaActive: Bool = false, preferFullPlayer: Bool = false,
+               surface: Surface = .foreground, hot: Bool = false, idleFor: TimeInterval = 0) -> TimeInterval {
         switch outcome {
         case .idleStopped:
             return 30
@@ -34,17 +65,20 @@ struct PollPolicy: Equatable, Sendable {
         case .playing(let isPlaying, let remaining):
             if quotaActive { return 6 }
             if preferFullPlayer { return 1 }          // 過期資料 → 盡快用另一個端點確認
-            guard isPlaying else { return pausedInterval }
-            // 接近歌曲結尾：在預計換歌後馬上查一次
-            if let remaining, remaining > 0, remaining < playingInterval {
+            guard isPlaying else { return pausedDelay(idleFor: idleFor) }
+            let base = hot ? playingInterval : steadyInterval(for: surface)
+            // 接近歌曲結尾：在預計換歌後馬上查一次（任何模式都一樣）
+            if let remaining, remaining > 0, remaining < base {
                 return max(0.5, remaining + 0.4)
             }
-            return playingInterval
+            return base
         case .nonMusic:
-            return quotaActive ? 10 : 5
+            if quotaActive { return 10 }
+            return idleFor < 300 ? 5 : 10
         case .nothing(let streak):
-            // 偶發的 204（切歌、切換裝置）先快速重試
-            return streak < 2 ? 3 : 10
+            // 偶發的 204（切歌、切換裝置）先快速重試；沒在播放久了就放慢
+            if streak < 2 { return 3 }
+            return idleFor < 120 ? 10 : 30
         case .rateLimited(let retryAfter, let quotaExceeded):
             return quotaExceeded ? max(retryAfter, 30) : max(retryAfter, 1)
         case .error(let streak):
@@ -86,18 +120,22 @@ struct IdlePolicy: Equatable, Sendable {
         return carConnected ? base * carMultiplier : base
     }
 
-    /// 閒置多久之後結束即時動態；廣告 / Podcast 還在播就不結束
-    func activityEndDelay(for kind: Kind) -> TimeInterval? {
+    /// 閒置多久之後結束即時動態；廣告 / Podcast 還在播就不結束。
+    /// 連著車用音訊時「沒在播放」也用暫停的門檻：人還在車上，常常只是切換來源。
+    func activityEndDelay(for kind: Kind, carConnected: Bool = false) -> TimeInterval? {
         switch kind {
-        case .nothing: return activityEndAfterNothing
+        case .nothing: return carConnected ? activityEndAfterPaused : activityEndAfterNothing
         case .paused: return activityEndAfterPaused
         case .nonMusic: return nil
         }
     }
 
-    /// 即時動態閒置太久 → 結束（與 shouldStop 不同：這個前景也會做，因為佔用靈動島）
-    func shouldEndActivity(kind: Kind, since: Date, now: Date) -> Bool {
-        guard let delay = activityEndDelay(for: kind) else { return false }
+    /// 即時動態閒置太久 → 結束（與 shouldStop 不同：這個前景也會做，因為佔用動態島）。
+    /// 這一輪還沒播過任何歌時不收：使用者常常先開 CarLyrics 再去 Spotify 按播放，
+    /// 這時候收掉的話，App 在背景就沒辦法再開始即時動態了。
+    func shouldEndActivity(kind: Kind, since: Date, now: Date, carConnected: Bool = false,
+                           hasPlayed: Bool = true) -> Bool {
+        guard hasPlayed, let delay = activityEndDelay(for: kind, carConnected: carConnected) else { return false }
         return now.timeIntervalSince(since) >= delay
     }
 

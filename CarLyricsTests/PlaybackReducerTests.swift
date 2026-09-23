@@ -7,10 +7,11 @@ final class PlaybackReducerTests: XCTestCase {
     private var state = PlaybackState()
 
     private func context(_ dt: TimeInterval = 0, foreground: Bool = false, car: Bool = false,
-                         activity: Bool = true, endWhenIdle: Bool = false) -> PlaybackReducer.Context {
+                         activity: Bool = true, endWhenIdle: Bool = false,
+                         surface: PollPolicy.Surface = .foreground) -> PlaybackReducer.Context {
         PlaybackReducer.Context(now: t0.addingTimeInterval(dt), isForeground: foreground,
                                 carConnected: car, activityIsActive: activity,
-                                endActivityWhenIdle: endWhenIdle)
+                                endActivityWhenIdle: endWhenIdle, surface: surface)
     }
 
     private func play(_ np: NowPlaying, at dt: TimeInterval) -> PlayerPollResult {
@@ -242,11 +243,13 @@ final class PlaybackReducerTests: XCTestCase {
 
     // MARK: 靈動島不要被佔用
 
-    /// 沒在播放 30 秒後結束即時動態；只送一次，而且不停止背景執行
+    /// 播過歌之後，沒在播放 30 秒結束即時動態；只送一次，而且不停止背景執行
     func testActivityEndsAfterNothingWhenEnabled() {
-        send(.nothing, context(0, endWhenIdle: true))
+        send(play(Fixture.nowPlaying(), at: 0), context(0, endWhenIdle: true))
+        send(.nothing, context(1, endWhenIdle: true))
         let start = send(.nothing, context(10, endWhenIdle: true))
-        XCTAssertEqual(start.effects, [.pushStopped, .publishIdle("Spotify 沒有在播放")])
+        XCTAssertTrue(start.effects.contains(.pushStopped))
+        XCTAssertFalse(start.effects.contains(.endActivity))
 
         let end = send(.nothing, context(45, endWhenIdle: true))
         XCTAssertEqual(end.effects, [.endActivity])
@@ -254,6 +257,24 @@ final class PlaybackReducerTests: XCTestCase {
 
         let again = send(.nothing, context(60, endWhenIdle: true))
         XCTAssertTrue(again.effects.isEmpty, "已經結束過就不再送")
+    }
+
+    /// 還沒播過任何歌（先開 CarLyrics 再去 Spotify 按播放）：不收起，否則背景開不回來
+    func testNothingBeforeAnySongKeepsActivity() {
+        send(.nothing, context(0, endWhenIdle: true))
+        send(.nothing, context(10, endWhenIdle: true))
+        let out = send(.nothing, context(300, endWhenIdle: true))
+        XCTAssertFalse(out.effects.contains(.endActivity))
+        XCTAssertFalse(state.hasPlayed)
+    }
+
+    /// 連著車用音訊時「沒在播放」改用 5 分鐘門檻
+    func testCarConnectedNothingUsesPauseThreshold() {
+        send(play(Fixture.nowPlaying(), at: 0), context(0, car: true, endWhenIdle: true))
+        send(.nothing, context(1, car: true, endWhenIdle: true))
+        send(.nothing, context(10, car: true, endWhenIdle: true))
+        XCTAssertFalse(send(.nothing, context(60, car: true, endWhenIdle: true)).effects.contains(.endActivity))
+        XCTAssertTrue(send(.nothing, context(400, car: true, endWhenIdle: true)).effects.contains(.endActivity))
     }
 
     /// 設定關掉時維持舊行為：即時動態留著
@@ -281,9 +302,37 @@ final class PlaybackReducerTests: XCTestCase {
         XCTAssertFalse(out.effects.contains(.endActivity))
     }
 
+    // MARK: 省電輪詢
+
+    /// 剛換歌維持最快；穩定播放後依看得到的畫面放慢，接近結尾仍然提早問
+    func testPollingSlowsDownWhenSteadyAndHidden() {
+        let np = Fixture.nowPlaying(progress: 10, duration: 200)
+        let first = send(play(np, at: 0), context(0, surface: .hidden))
+        XCTAssertEqual(first.delay, 2.5, "換歌後 10 秒內維持最快")
+        let steady = send(play(Fixture.nowPlaying(progress: 25, duration: 200), at: 15), context(15, surface: .hidden))
+        XCTAssertEqual(steady.delay, 15)
+        let visible = send(play(Fixture.nowPlaying(progress: 30, duration: 200), at: 20), context(20, surface: .visible))
+        XCTAssertEqual(visible.delay, 5)
+        let nearEnd = send(play(Fixture.nowPlaying(progress: 195, duration: 200), at: 185),
+                           context(185, surface: .hidden))
+        XCTAssertLessThan(nearEnd.delay, 15)
+    }
+
+    /// 暫停越久問得越少
+    func testPausedBackoff() {
+        send(play(Fixture.nowPlaying(), at: 0), context())
+        let soon = send(play(Fixture.nowPlaying(playing: false), at: 1), context(1))
+        XCTAssertEqual(soon.delay, 5)
+        let later = send(play(Fixture.nowPlaying(playing: false), at: 300), context(300))
+        XCTAssertEqual(later.delay, 10)
+        let long = send(play(Fixture.nowPlaying(playing: false), at: 900), context(900, foreground: true))
+        XCTAssertEqual(long.delay, 20)
+    }
+
     /// 本來就沒有即時動態：不用送結束
     func testNoActivityNothingToEnd() {
-        send(.nothing, context(0, activity: false, endWhenIdle: true))
+        send(play(Fixture.nowPlaying(), at: 0), context(0, activity: false, endWhenIdle: true))
+        send(.nothing, context(1, activity: false, endWhenIdle: true))
         send(.nothing, context(10, activity: false, endWhenIdle: true))
         let out = send(.nothing, context(45, activity: false, endWhenIdle: true))
         XCTAssertFalse(out.effects.contains(.endActivity))
@@ -292,7 +341,8 @@ final class PlaybackReducerTests: XCTestCase {
 
     /// 恢復播放後再閒置，會再收起一次
     func testResumeResetsEndedFlag() {
-        send(.nothing, context(0, endWhenIdle: true))
+        send(play(Fixture.nowPlaying(), at: 0), context(0, endWhenIdle: true))
+        send(.nothing, context(1, endWhenIdle: true))
         send(.nothing, context(10, endWhenIdle: true))
         send(.nothing, context(45, endWhenIdle: true))
         XCTAssertTrue(state.activityEndedForIdle)

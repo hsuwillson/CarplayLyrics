@@ -355,8 +355,8 @@ final class AppModel {
     private func startTickLoop() {
         tickTask = Task { [weak self] in
             while !Task.isCancelled {
-                let delay = self?.tick() ?? 1
-                try? await Task.sleep(for: .seconds(delay), tolerance: .milliseconds(15))
+                let delay = self?.tick() ?? 5
+                try? await Task.sleep(for: .seconds(delay), tolerance: .milliseconds(50))
             }
         }
     }
@@ -440,6 +440,7 @@ final class AppModel {
         Task {
             do {
                 try await player.send(command)
+                playback.markHot(at: Date())
                 debugLog("播放控制：\(command.name)")
                 controlSuccessCount += 1
                 applyOptimistic(command)
@@ -546,14 +547,22 @@ final class AppModel {
         syncPublishedState(result)
         for effect in output.effects { run(effect) }
         updateIdleTimer()
-        tick()
+        // 每次輪詢都可能修正位置：從新的估計重新排下一次換句（tick 迴圈不再每秒醒來）
+        if tickTask != nil { rescheduleTick() } else { tick() }
         return output.delay
     }
 
     private func context() -> PlaybackReducer.Context {
         PlaybackReducer.Context(now: Date(), monotonicNow: AppClock.now(), isForeground: isForeground,
                                 carConnected: isCarConnected, activityIsActive: liveActivity.isActive,
-                                endActivityWhenIdle: endActivityWhenIdle)
+                                endActivityWhenIdle: endActivityWhenIdle, surface: pollSurface)
+    }
+
+    /// 使用者現在看得到什麼：前景最即時；背景有正常更新的即時動態或在車上次之；其他情況問得最少
+    private var pollSurface: PollPolicy.Surface {
+        if isForeground { return .foreground }
+        if isCarConnected || (liveActivity.isActive && !liveActivity.backgroundBlocked) { return .visible }
+        return .hidden
     }
 
     /// reducer 的狀態 → 畫面用的 @Observable 屬性（只有真的改變才寫，避免整頁重繪）
@@ -653,12 +662,13 @@ final class AppModel {
     // MARK: - 每次換句
 
     /// 以本地時鐘推算目前位置，更新畫面上的目前句 / 下一句。
-    /// 回傳到下一次換句的秒數（最多 1 秒），讓 tick 迴圈剛好在換句時醒來。
+    /// 回傳到下一次換句的秒數，讓 tick 迴圈剛好在換句時醒來；
+    /// 位置被輪詢修正時 handle() 會重新排程，所以不需要固定每秒醒來檢查。
     @discardableResult
     private func tick() -> TimeInterval {
-        // 沒有播放資訊時不用每秒醒來（任何狀態改變都會 rescheduleTick）
+        // 沒有播放資訊時不用常常醒來（任何狀態改變都會 rescheduleTick）
         guard let pos = playback.engine.position(at: AppClock.now()) else { return 5 }
-        if abs(position - pos) >= 0.05 { position = pos }
+        if isForeground, abs(position - pos) >= 0.05 { position = pos }
         let effective = pos + totalOffset
         let d = LyricsDisplay(lines: syncedLines, position: effective)
         if d != lyricsDisplay {
@@ -668,8 +678,12 @@ final class AppModel {
             if lineChanged { widget.lineChanged(isForeground: isForeground) }
         }
         guard playback.engine.snapshot?.isPlaying == true else { return 5 }
-        guard let next = syncedLines.nextChangeTime(after: effective) else { return 1 }
-        return min(1, max(0.02, next - effective + 0.01))
+        guard let next = syncedLines.nextChangeTime(after: effective) else {
+            // 沒有同步歌詞 / 最後一句之後：沒有要換的句子，等歌曲結束或下一次輪詢就好
+            let remaining = (playback.nowPlaying?.duration ?? 0) - pos
+            return min(60, max(5, remaining))
+        }
+        return min(60, max(0.02, next - effective + 0.01))
     }
 
     /// 歌曲 0 秒對應的真實時刻（不含延遲）
@@ -787,7 +801,8 @@ final class AppModel {
             }
         }
         lastPollAt = now
-        guard now.timeIntervalSince(lastHeartbeatWrite) > 15 else { return }
+        // 最長輪詢間隔 30 秒；讀取端門檻 60 秒，每 30 秒寫一次就夠
+        guard now.timeIntervalSince(lastHeartbeatWrite) > 30 else { return }
         lastHeartbeatWrite = now
         preferences.lastHeartbeat = (now, !isForeground)
     }

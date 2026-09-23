@@ -23,6 +23,21 @@ struct PlaybackState: Equatable, Sendable {
     var lastAcceptedSentAt = Date.distantPast
     /// 已經因為閒置結束過即時動態（避免重複送出結束）
     var activityEndedForIdle = false
+    /// 這一輪（App 開始輪詢以來）是否播過歌；還沒播過就不因閒置收起即時動態
+    var hasPlayed = false
+    /// 這個時間之前維持最快的輪詢（剛換歌 / 拖動 / 暫停 / 使用者操作）
+    var hotUntil = Date.distantPast
+
+    func isHot(now: Date) -> Bool { now < hotUntil }
+
+    /// 剛發生變化：接下來一小段時間問快一點，才接得住連續操作
+    mutating func markHot(at now: Date, for seconds: TimeInterval = 10) {
+        hotUntil = max(hotUntil, now.addingTimeInterval(seconds))
+    }
+
+    func idleDuration(now: Date) -> TimeInterval {
+        idleSince.map { now.timeIntervalSince($0) } ?? 0
+    }
 
     func quotaActive(now: Date) -> Bool { now < quotaModeUntil }
 
@@ -76,18 +91,21 @@ struct PlaybackReducer: Sendable {
         var isForeground: Bool
         var carConnected: Bool
         var activityIsActive: Bool
-        /// 沒在播放時結束即時動態，不要一直佔用靈動島
+        /// 沒在播放時結束即時動態，不要一直佔用動態島
         var endActivityWhenIdle: Bool
+        /// 使用者看得到什麼（決定輪詢頻率）
+        var surface: PollPolicy.Surface
 
         init(now: Date, monotonicNow: Date? = nil, isForeground: Bool = false,
              carConnected: Bool = false, activityIsActive: Bool = true,
-             endActivityWhenIdle: Bool = false) {
+             endActivityWhenIdle: Bool = false, surface: PollPolicy.Surface = .foreground) {
             self.now = now
             self.monotonicNow = monotonicNow ?? now
             self.isForeground = isForeground
             self.carConnected = carConnected
             self.activityIsActive = activityIsActive
             self.endActivityWhenIdle = endActivityWhenIdle
+            self.surface = surface
         }
     }
 
@@ -149,6 +167,8 @@ struct PlaybackReducer: Sendable {
 
         let change = state.engine.update(snapshot)
         state.nowPlaying = np
+        if np.isPlaying { state.hasPlayed = true }
+        if change != .none && change != .stale { state.markHot(at: context.now) }
 
         switch change {
         case .newTrack:
@@ -192,7 +212,9 @@ struct PlaybackReducer: Sendable {
         }()
         output.delay = pollPolicy.delay(for: .playing(isPlaying: np.isPlaying, remaining: remaining),
                                         quotaActive: state.quotaActive(now: context.now),
-                                        preferFullPlayer: state.preferFullPlayerEndpoint)
+                                        preferFullPlayer: state.preferFullPlayerEndpoint,
+                                        surface: context.surface, hot: state.isHot(now: context.now),
+                                        idleFor: state.idleDuration(now: context.now))
         return output
     }
 
@@ -213,7 +235,8 @@ struct PlaybackReducer: Sendable {
         // 播放中的廣告 / Podcast 用 60 分鐘門檻；暫停後回到 30 分鐘
         state.markIdle(playing ? .nonMusic : .paused, at: context.now)
         if appendIdleStop(&output, &state, context: context) { return output }
-        output.delay = pollPolicy.delay(for: .nonMusic, quotaActive: state.quotaActive(now: context.now))
+        output.delay = pollPolicy.delay(for: .nonMusic, quotaActive: state.quotaActive(now: context.now),
+                                        idleFor: state.idleDuration(now: context.now))
         return output
     }
 
@@ -243,7 +266,8 @@ struct PlaybackReducer: Sendable {
         state.markIdle(.nothing, at: context.now)
         if appendIdleStop(&output, &state, context: context) { return output }
         appendActivityEndForIdle(&output, &state, context: context)
-        output.delay = pollPolicy.delay(for: .nothing(streak: state.emptyResponseStreak))
+        output.delay = pollPolicy.delay(for: .nothing(streak: state.emptyResponseStreak),
+                                        idleFor: state.idleDuration(now: context.now))
         return output
     }
 
@@ -257,7 +281,8 @@ struct PlaybackReducer: Sendable {
                                           context: Context) -> Bool {
         guard context.endActivityWhenIdle, context.activityIsActive, !state.activityEndedForIdle,
               let kind = state.idleKind, let since = state.idleSince,
-              idlePolicy.shouldEndActivity(kind: kind, since: since, now: context.now)
+              idlePolicy.shouldEndActivity(kind: kind, since: since, now: context.now,
+                                           carConnected: context.carConnected, hasPlayed: state.hasPlayed)
         else { return false }
         state.activityEndedForIdle = true
         output.effects.append(.endActivity)

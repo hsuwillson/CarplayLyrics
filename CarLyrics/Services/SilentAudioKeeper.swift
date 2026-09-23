@@ -4,17 +4,20 @@ import Foundation
 /// 讓 App 在背景持續執行：以 .mixWithOthers 循環播放「無聲」音訊，
 /// 不會打斷 Spotify，也不會出現在「正在播放」。
 ///
+/// 省電：以「單聲道 + 硬體取樣率」建立圖，避免混音器整段時間都在做取樣率轉換。
+///
 /// 會自我修復：
 /// - 接上 CarPlay / 藍牙 / AirPods 等路由或取樣率改變時，AVAudioEngine 會自己停止
-///   （`AVAudioEngineConfigurationChange`）→ 重新啟動
+///   （`AVAudioEngineConfigurationChange`）→ 延遲 0.5 秒合併同一波通知後，必要時才重新啟動
 /// - 中斷（來電、Siri）結束通知不一定會送達 → 由 `ensureRunning()`（每次輪詢呼叫）補救
 /// - media services reset → 重新建立 engine / player
 @MainActor
 final class SilentAudioKeeper {
     private var engine = AVAudioEngine()
     private var player = AVAudioPlayerNode()
-    private let format = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 2)!
-    private lazy var silence: AVAudioPCMBuffer? = makeSilence()
+    /// player → mainMixer 的格式：單聲道、硬體取樣率（`connectPlayer()` 會依硬體更新）
+    private var format = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1)!
+    private var silence: AVAudioPCMBuffer?
 
     /// 使用者希望背景執行（意圖）；實際狀態看 `isRunning`
     private(set) var wantsRunning = false
@@ -27,6 +30,12 @@ final class SilentAudioKeeper {
     /// 上次嘗試重啟的時間（節流用）
     private var lastAttemptAt: Date?
     private static let retryInterval: TimeInterval = 20
+    /// 設定 / 路由改變通知常常一次來一串：延遲這麼久再檢查，合併成一次重啟
+    private static let debounceNanoseconds: UInt64 = 500_000_000
+    private static let configChangeReason = "設定改變"
+    /// 等待中的延遲檢查（新的通知會取消並取代它）
+    private var pendingCheck: Task<Void, Never>?
+    private var pendingCheckReason: String?
     /// 中斷結束時通知 AppModel（重新計算閒置時間）
     var onInterruptionEnded: (() -> Void)?
     /// 接上 / 離開車用音訊（CarPlay、車用藍牙）
@@ -68,10 +77,14 @@ final class SilentAudioKeeper {
         observers.append(center.addObserver(forName: AVAudioSession.routeChangeNotification,
                                             object: nil, queue: .main) { [weak self] note in
             MainActor.assumeIsolated {
-                let reason = (note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt) ?? 0
-                debugLog("音訊路由改變（reason \(reason)）")
+                let raw = (note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt) ?? 0
+                let reason = AVAudioSession.RouteChangeReason(rawValue: raw)
+                // 只記錄裝置接上 / 移除；其他（類別改變、route config 改變…）安靜處理
+                if reason == .newDeviceAvailable || reason == .oldDeviceUnavailable {
+                    debugLog("音訊路由改變（reason \(raw)）")
+                }
                 self?.updateCarConnection()
-                self?.ensureRunning()
+                self?.scheduleCheck(reason: "路由改變")
             }
         })
     }
@@ -84,6 +97,7 @@ final class SilentAudioKeeper {
 
     func stop() {
         wantsRunning = false
+        cancelPendingCheck()
         player.stop()
         engine.stop()
         try? AVAudioSession.sharedInstance().setActive(false)
@@ -106,20 +120,82 @@ final class SilentAudioKeeper {
         engine = AVAudioEngine()
         player = AVAudioPlayerNode()
         engine.attach(player)
-        engine.connect(player, to: engine.mainMixerNode, format: format)
+        connectPlayer()
         engineObserver = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange,
                                                                 object: engine, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.restart(reason: "音訊引擎設定改變（路由 / 取樣率）") }
+            MainActor.assumeIsolated { self?.scheduleCheck(reason: Self.configChangeReason) }
         }
     }
 
-    private func startInternal() {
+    /// 目前硬體輸出的取樣率（拿不到時退回 session 的，再不行就 48 kHz）
+    private func hardwareSampleRate() -> Double {
+        let rate = engine.outputNode.outputFormat(forBus: 0).sampleRate
+        if rate > 0 { return rate }
+        let sessionRate = AVAudioSession.sharedInstance().sampleRate
+        return sessionRate > 0 ? sessionRate : 48_000
+    }
+
+    /// 依硬體取樣率重建格式（單聲道）與無聲緩衝，並重新接上 player → mainMixer。
+    /// 只能在 engine 停止時呼叫。
+    private func connectPlayer() {
+        let rate = hardwareSampleRate()
+        if let newFormat = AVAudioFormat(standardFormatWithSampleRate: rate, channels: 1) {
+            format = newFormat
+        }
+        engine.connect(player, to: engine.mainMixerNode, format: format)
+        silence = makeSilence()
+    }
+
+    /// 設定 / 路由改變：延遲一下再檢查，把同一波通知合併成（最多）一次重啟
+    private func scheduleCheck(reason: String) {
+        guard wantsRunning else { return }
+        pendingCheck?.cancel()
+        // 同一波裡有「設定改變」就以它為準（比較能說明重啟原因）
+        if pendingCheckReason != Self.configChangeReason { pendingCheckReason = reason }
+        pendingCheck = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: Self.debounceNanoseconds)
+            guard !Task.isCancelled else { return }
+            self?.runPendingCheck()
+        }
+    }
+
+    private func cancelPendingCheck() {
+        pendingCheck?.cancel()
+        pendingCheck = nil
+        pendingCheckReason = nil
+    }
+
+    private func runPendingCheck() {
+        let reason = pendingCheckReason ?? Self.configChangeReason
+        pendingCheck = nil
+        pendingCheckReason = nil
+        guard wantsRunning else { return }
+        let rateChanged = hardwareSampleRate() != format.sampleRate
+        // 還在跑、格式也沒變 → 不用動（例如 Spotify 自己改 session 造成的通知）
+        guard !isRunning || rateChanged else { return }
+        // 通話中重啟一定失敗：交給有節流的 ensureRunning，避免每個通知都重試
+        if interrupted && !rateChanged {
+            ensureRunning()
+            return
+        }
+        restart(reason: reason)
+    }
+
+    private func startInternal(quiet: Bool = false) {
         do {
             let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+            // 類別已經正確就不要再設（重設會再觸發路由改變通知）
+            if session.category != .playback || session.mode != .default
+                || !session.categoryOptions.contains(.mixWithOthers) {
+                try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+            }
             try session.setActive(true)
             let engineWasStopped = !engine.isRunning
-            if engineWasStopped { try engine.start() }
+            if engineWasStopped {
+                // 啟用 session 後硬體取樣率可能才確定 → 格式不符就重新接線，避免取樣率轉換
+                if hardwareSampleRate() != format.sampleRate { connectPlayer() }
+                try engine.start()
+            }
             // 引擎曾停止時，player 的狀態不可靠 → 一律重新排程
             if engineWasStopped || !player.isPlaying, let silence {
                 player.stop()
@@ -128,7 +204,7 @@ final class SilentAudioKeeper {
             }
             lastAttemptAt = nil
             interrupted = false
-            debugLog("背景音訊執行中")
+            if !quiet { debugLog("背景音訊執行中（\(Int(format.sampleRate)) Hz）") }
         } catch {
             debugLog("背景音訊啟動失敗：\(error.localizedDescription)")
         }
@@ -136,18 +212,24 @@ final class SilentAudioKeeper {
 
     private func restart(reason: String, recreate: Bool = false) {
         guard wantsRunning else { return }
+        cancelPendingCheck()
         lastAttemptAt = Date()
-        restartCount += 1
-        lastRestartReason = reason
-        lastRestartAt = Date()
-        debugLog("背景音訊重啟：\(reason)")
         player.stop()
         engine.stop()
+        let oldRate = format.sampleRate
         if recreate {
             buildGraph()
-            silence = makeSilence()
+        } else if hardwareSampleRate() != oldRate {
+            connectPlayer()
         }
-        startInternal()
+        let newRate = format.sampleRate
+        let rates = oldRate == newRate ? "\(Int(newRate)) Hz" : "\(Int(oldRate))→\(Int(newRate)) Hz"
+        let detail = "\(reason)（\(rates)）"
+        restartCount += 1
+        lastRestartReason = detail
+        lastRestartAt = Date()
+        debugLog("背景音訊重啟：\(detail)")
+        startInternal(quiet: true)
     }
 
     private func makeSilence() -> AVAudioPCMBuffer? {
