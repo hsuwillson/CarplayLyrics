@@ -114,6 +114,14 @@ final class AppModel {
         didSet { preferences.autoFocusInCar = autoFocusInCar }
     }
 
+    /// 沒在播放時結束即時動態（不要一直佔用靈動島）
+    var endActivityWhenIdle: Bool {
+        didSet {
+            preferences.endActivityWhenIdle = endActivityWhenIdle
+            if !endActivityWhenIdle { playback.activityEndedForIdle = false }
+        }
+    }
+
     /// Wi-Fi 時預先載入整個播放佇列的歌詞
     var prefetchQueueOnWiFi: Bool {
         didSet { preferences.prefetchQueueOnWiFi = prefetchQueueOnWiFi }
@@ -149,6 +157,7 @@ final class AppModel {
         focusFontScale = preferences.focusFontScale
         focusLandscapeLock = preferences.focusLandscapeLock
         autoFocusInCar = preferences.autoFocusInCar
+        endActivityWhenIdle = preferences.endActivityWhenIdle
         prefetchQueueOnWiFi = preferences.prefetchQueueOnWiFi
         hasSeenSetup = preferences.hasSeenSetup
         isCarConnected = SilentAudioKeeper.detectCar()
@@ -521,7 +530,8 @@ final class AppModel {
 
     private func context() -> PlaybackReducer.Context {
         PlaybackReducer.Context(now: Date(), monotonicNow: AppClock.now(), isForeground: isForeground,
-                                carConnected: isCarConnected, activityIsActive: liveActivity.isActive)
+                                carConnected: isCarConnected, activityIsActive: liveActivity.isActive,
+                                endActivityWhenIdle: endActivityWhenIdle)
     }
 
     /// reducer 的狀態 → 畫面用的 @Observable 屬性（只有真的改變才寫，避免整頁重繪）
@@ -555,7 +565,7 @@ final class AppModel {
         case .pushCurrent(let important):
             pushLiveActivity(priority: important ? .important : .routine)
         case .endActivity:
-            debugLog("閒置太久，結束即時動態")
+            debugLog("閒置，結束即時動態（靈動島讓出來）")
             liveActivity.end()
         case .publishIdle(let message):
             widget.publish(.idle(message))

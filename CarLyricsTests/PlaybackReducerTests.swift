@@ -7,9 +7,10 @@ final class PlaybackReducerTests: XCTestCase {
     private var state = PlaybackState()
 
     private func context(_ dt: TimeInterval = 0, foreground: Bool = false, car: Bool = false,
-                         activity: Bool = true) -> PlaybackReducer.Context {
+                         activity: Bool = true, endWhenIdle: Bool = false) -> PlaybackReducer.Context {
         PlaybackReducer.Context(now: t0.addingTimeInterval(dt), isForeground: foreground,
-                                carConnected: car, activityIsActive: activity)
+                                carConnected: car, activityIsActive: activity,
+                                endActivityWhenIdle: endWhenIdle)
     }
 
     private func play(_ np: NowPlaying, at dt: TimeInterval) -> PlayerPollResult {
@@ -238,6 +239,66 @@ final class PlaybackReducerTests: XCTestCase {
         XCTAssertEqual(formatTime(75), "1:15")
         XCTAssertEqual(formatTime(3600), "60:00")
     }
+
+    // MARK: 靈動島不要被佔用
+
+    /// 沒在播放 30 秒後結束即時動態；只送一次，而且不停止背景執行
+    func testActivityEndsAfterNothingWhenEnabled() {
+        send(.nothing, context(0, endWhenIdle: true))
+        let start = send(.nothing, context(10, endWhenIdle: true))
+        XCTAssertEqual(start.effects, [.pushStopped, .publishIdle("Spotify 沒有在播放")])
+
+        let end = send(.nothing, context(45, endWhenIdle: true))
+        XCTAssertEqual(end.effects, [.endActivity])
+        XCTAssertTrue(state.activityEndedForIdle)
+
+        let again = send(.nothing, context(60, endWhenIdle: true))
+        XCTAssertTrue(again.effects.isEmpty, "已經結束過就不再送")
+    }
+
+    /// 設定關掉時維持舊行為：即時動態留著
+    func testActivityStaysWhenSettingOff() {
+        send(.nothing, context(0))
+        send(.nothing, context(10))
+        let out = send(.nothing, context(120))
+        XCTAssertFalse(out.effects.contains(.endActivity))
+    }
+
+    /// 暫停只是等紅燈：5 分鐘內不收起
+    func testPausedKeepsActivityForFiveMinutes() {
+        let paused = Fixture.nowPlaying(isPlaying: false)
+        send(play(paused, at: 0), context(0, endWhenIdle: true))
+        let soon = send(play(paused, at: 120), context(120, endWhenIdle: true))
+        XCTAssertFalse(soon.effects.contains(.endActivity))
+        let later = send(play(paused, at: 400), context(400, endWhenIdle: true))
+        XCTAssertTrue(later.effects.contains(.endActivity))
+    }
+
+    /// 廣告 / Podcast 還在播：不收起（人還在聽，只是沒有歌詞）
+    func testNonMusicKeepsActivity() {
+        send(.nonMusic(.ad, playing: true), context(0, endWhenIdle: true))
+        let out = send(.nonMusic(.ad, playing: true), context(600, endWhenIdle: true))
+        XCTAssertFalse(out.effects.contains(.endActivity))
+    }
+
+    /// 本來就沒有即時動態：不用送結束
+    func testNoActivityNothingToEnd() {
+        send(.nothing, context(0, activity: false, endWhenIdle: true))
+        send(.nothing, context(10, activity: false, endWhenIdle: true))
+        let out = send(.nothing, context(45, activity: false, endWhenIdle: true))
+        XCTAssertFalse(out.effects.contains(.endActivity))
+        XCTAssertFalse(state.activityEndedForIdle)
+    }
+
+    /// 恢復播放後再閒置，會再收起一次
+    func testResumeResetsEndedFlag() {
+        send(.nothing, context(0, endWhenIdle: true))
+        send(.nothing, context(10, endWhenIdle: true))
+        send(.nothing, context(45, endWhenIdle: true))
+        XCTAssertTrue(state.activityEndedForIdle)
+        send(play(Fixture.nowPlaying(), at: 50), context(50, endWhenIdle: true))
+        XCTAssertFalse(state.activityEndedForIdle)
+    }
 }
 
 final class LiveActivityUpdatePolicyTests: XCTestCase {
@@ -265,3 +326,4 @@ final class LiveActivityUpdatePolicyTests: XCTestCase {
         XCTAssertTrue(policy.shouldEnterBlocked(backgroundRejectStreak: 5))
     }
 }
+

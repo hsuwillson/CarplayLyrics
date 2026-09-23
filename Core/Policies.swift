@@ -71,6 +71,10 @@ struct IdlePolicy: Equatable, Sendable {
     var nonMusicLimit: TimeInterval = 3600
     /// 連著車用音訊（CarPlay / 車用藍牙）時放寬幾倍：人還在車上
     var carMultiplier: Double = 3
+    /// 沒在播放這麼久之後結束即時動態（不要一直佔用靈動島）
+    var activityEndAfterNothing: TimeInterval = 30
+    /// 暫停這麼久之後結束即時動態（暫停常常只是等紅燈，給久一點）
+    var activityEndAfterPaused: TimeInterval = 300
 
     func limit(for kind: Kind, carConnected: Bool = false) -> TimeInterval {
         let base: TimeInterval
@@ -80,6 +84,21 @@ struct IdlePolicy: Equatable, Sendable {
         case .nonMusic: base = nonMusicLimit
         }
         return carConnected ? base * carMultiplier : base
+    }
+
+    /// 閒置多久之後結束即時動態；廣告 / Podcast 還在播就不結束
+    func activityEndDelay(for kind: Kind) -> TimeInterval? {
+        switch kind {
+        case .nothing: return activityEndAfterNothing
+        case .paused: return activityEndAfterPaused
+        case .nonMusic: return nil
+        }
+    }
+
+    /// 即時動態閒置太久 → 結束（與 shouldStop 不同：這個前景也會做，因為佔用靈動島）
+    func shouldEndActivity(kind: Kind, since: Date, now: Date) -> Bool {
+        guard let delay = activityEndDelay(for: kind) else { return false }
+        return now.timeIntervalSince(since) >= delay
     }
 
     /// 前景時永遠不停（Live Activity 之後進背景就無法再開始）

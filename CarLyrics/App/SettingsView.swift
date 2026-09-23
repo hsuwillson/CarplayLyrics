@@ -121,6 +121,9 @@ private struct DrivingSection: View {
             Toggle(isOn: $model.autoFocusInCar) {
                 Label("連上車用音訊時進入專注模式", systemImage: "car.side")
             }
+            Toggle(isOn: $model.endActivityWhenIdle) {
+                Label("沒在播放時收起即時動態", systemImage: "rectangle.topthird.inset.filled")
+            }
             if model.isCarConnected {
                 LabeledContent("車用音訊", value: "已連接")
                     .font(.footnote)
@@ -128,7 +131,7 @@ private struct DrivingSection: View {
         } header: {
             Text("開車模式")
         } footer: {
-            Text("即時動態只能在 App 開著時啟動：上車時先打開一次 CarLyrics 再鎖定手機。")
+            Text("即時動態只能在 App 開著時啟動：上車時先打開一次 CarLyrics 再鎖定手機。\n「沒在播放時收起」會在 Spotify 停止 30 秒（暫停 5 分鐘）後結束即時動態，靈動島就不會一直被佔用；恢復播放時若 App 在背景，可能要再打開一次 CarLyrics 才會重新出現。")
         }
     }
 }

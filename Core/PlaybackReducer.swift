@@ -21,6 +21,8 @@ struct PlaybackState: Equatable, Sendable {
     var preferFullPlayerEndpoint = false
     /// 最後一次採用的輪詢請求送出時間
     var lastAcceptedSentAt = Date.distantPast
+    /// 已經因為閒置結束過即時動態（避免重複送出結束）
+    var activityEndedForIdle = false
 
     func quotaActive(now: Date) -> Bool { now < quotaModeUntil }
 
@@ -33,6 +35,7 @@ struct PlaybackState: Equatable, Sendable {
     mutating func clearIdle() {
         idleKind = nil
         idleSince = nil
+        activityEndedForIdle = false
     }
 }
 
@@ -73,14 +76,18 @@ struct PlaybackReducer: Sendable {
         var isForeground: Bool
         var carConnected: Bool
         var activityIsActive: Bool
+        /// 沒在播放時結束即時動態，不要一直佔用靈動島
+        var endActivityWhenIdle: Bool
 
         init(now: Date, monotonicNow: Date? = nil, isForeground: Bool = false,
-             carConnected: Bool = false, activityIsActive: Bool = true) {
+             carConnected: Bool = false, activityIsActive: Bool = true,
+             endActivityWhenIdle: Bool = false) {
             self.now = now
             self.monotonicNow = monotonicNow ?? now
             self.isForeground = isForeground
             self.carConnected = carConnected
             self.activityIsActive = activityIsActive
+            self.endActivityWhenIdle = endActivityWhenIdle
         }
     }
 
@@ -177,6 +184,7 @@ struct PlaybackReducer: Sendable {
             state.markIdle(.paused, at: context.now)
         }
         if appendIdleStop(&output, &state, context: context) { return output }
+        appendActivityEndForIdle(&output, &state, context: context)
 
         let remaining: TimeInterval? = {
             guard let pos = state.engine.position(at: context.monotonicNow), np.duration > 0 else { return nil }
@@ -234,11 +242,27 @@ struct PlaybackReducer: Sendable {
         }
         state.markIdle(.nothing, at: context.now)
         if appendIdleStop(&output, &state, context: context) { return output }
+        appendActivityEndForIdle(&output, &state, context: context)
         output.delay = pollPolicy.delay(for: .nothing(streak: state.emptyResponseStreak))
         return output
     }
 
     // MARK: - 閒置
+
+    /// 閒置一段時間 → 結束即時動態（靈動島不要一直被佔用）。
+    /// 與 appendIdleStop 不同：前景也會做，而且不停止背景執行，
+    /// 下次 Spotify 開始播放時 App 會重新開一個即時動態。
+    @discardableResult
+    private func appendActivityEndForIdle(_ output: inout Output, _ state: inout PlaybackState,
+                                          context: Context) -> Bool {
+        guard context.endActivityWhenIdle, context.activityIsActive, !state.activityEndedForIdle,
+              let kind = state.idleKind, let since = state.idleSince,
+              idlePolicy.shouldEndActivity(kind: kind, since: since, now: context.now)
+        else { return false }
+        state.activityEndedForIdle = true
+        output.effects.append(.endActivity)
+        return true
+    }
 
     /// 閒置太久 → 加上停止的動作，回傳 true
     @discardableResult
