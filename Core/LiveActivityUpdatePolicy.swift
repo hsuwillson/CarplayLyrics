@@ -15,7 +15,7 @@ struct LiveActivityUpdatePolicy: Equatable, Sendable {
         /// 還沒有即時動態 → 開一個新的
         case start
         case send
-        /// 背景被擋：只記住最新內容，回前景再送
+        /// 背景被擋：只記住最新內容，回前景（或下一次探測）再送
         case store
         case skip
     }
@@ -28,15 +28,19 @@ struct LiveActivityUpdatePolicy: Equatable, Sendable {
         var priority: Priority
         /// 與目前已送出的內容相同
         var sameAsLast: Bool
+        /// 距離上一次真的送出去多久（背景被擋期間用來決定要不要探測）
+        var secondsSinceLastSend: TimeInterval
 
         init(isActive: Bool, startBlockedUntilForeground: Bool = false, backgroundBlocked: Bool = false,
-             isInBackground: Bool = false, priority: Priority = .routine, sameAsLast: Bool = false) {
+             isInBackground: Bool = false, priority: Priority = .routine, sameAsLast: Bool = false,
+             secondsSinceLastSend: TimeInterval = 0) {
             self.isActive = isActive
             self.startBlockedUntilForeground = startBlockedUntilForeground
             self.backgroundBlocked = backgroundBlocked
             self.isInBackground = isInBackground
             self.priority = priority
             self.sameAsLast = sameAsLast
+            self.secondsSinceLastSend = secondsSinceLastSend
         }
     }
 
@@ -45,13 +49,25 @@ struct LiveActivityUpdatePolicy: Equatable, Sendable {
     /// 也不要誤判把逐句更新關掉。
     var backgroundRejectLimit = 8
 
+    /// 「背景被擋」不是單行道：系統可能只是慢（套用超過 2 秒），不是拒絕。
+    /// 被擋期間每隔這麼久還是放一次換句更新出去當探測；一被套用就解除封鎖，歌詞繼續動。
+    /// 探測失敗的代價是一次白送的更新，誤判的代價是整趟車歌詞都不動。
+    var blockedProbeInterval: TimeInterval = 15
+
     func decide(_ input: Input) -> Decision {
         guard input.isActive else {
             return input.startBlockedUntilForeground ? .skip : .start
         }
         if input.sameAsLast { return .skip }
-        if input.backgroundBlocked && input.priority == .routine && input.isInBackground { return .store }
+        if input.backgroundBlocked && input.priority == .routine && input.isInBackground {
+            return shouldProbe(secondsSinceLastSend: input.secondsSinceLastSend) ? .send : .store
+        }
         return .send
+    }
+
+    /// 背景被擋期間，距離上次送出夠久了就探測一次
+    func shouldProbe(secondsSinceLastSend: TimeInterval) -> Bool {
+        secondsSinceLastSend >= blockedProbeInterval
     }
 
     /// 更新被擋的次數 → 要不要進入「背景被擋」模式

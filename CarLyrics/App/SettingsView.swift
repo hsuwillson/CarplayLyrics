@@ -109,6 +109,8 @@ private struct OffsetSection: View {
 
 private struct DrivingSection: View {
     @Environment(AppModel.self) private var model
+    /// 按過「現在顯示」之後的回饋（liveActivity 不是 @Observable，按鈕狀態不會自己更新）
+    @State private var startRequestedAt: Date?
 
     var body: some View {
         @Bindable var model = model
@@ -126,9 +128,20 @@ private struct DrivingSection: View {
             Toggle(isOn: $model.keepScreenOn) {
                 Label("播放時螢幕不自動關閉", systemImage: "sun.max")
             }
-            if model.isCarConnected {
-                LabeledContent("CarPlay", value: "已連接")
-                    .font(.footnote)
+            // 一律顯示：「開車時」模式在家看得出為什麼沒有鎖定畫面歌詞；車子沒被認出來時也看得出來
+            LabeledContent("CarPlay", value: model.isCarConnected ? "已連接" : "未連接")
+                .font(.footnote)
+            if model.liveActivityMode != .off, model.auth.isLoggedIn, model.activitiesEnabled {
+                // 手動開始：車子沒被認出來、或 App 在背景時沒開成功，不用等下一次連接（還沒播歌就先顯示「連接中」）
+                Button {
+                    model.startLiveActivityNow()
+                    startRequestedAt = Date()
+                } label: {
+                    Label(startRequestedAt == nil ? "現在顯示鎖定畫面歌詞" : "已送出，看一下鎖定畫面",
+                          systemImage: "lock.iphone")
+                }
+                .accessibilityLabel("現在顯示鎖定畫面歌詞")
+                .accessibilityHint("不必連上 CarPlay，馬上在鎖定畫面開始顯示這首歌的歌詞")
             }
         } header: {
             Text("開車")
@@ -146,14 +159,14 @@ private struct DrivingSection: View {
         } header: {
             Text("進階")
         } footer: {
-            Text("「鎖定手機後繼續同步」關掉的話，鎖定畫面與 CarPlay 的歌詞會在鎖定後停住。收起：Spotify 停止 30 秒、暫停 5 分鐘後自動結束（在車上一律 5 分鐘）。")
+            Text("「鎖定手機後繼續同步」關掉的話，鎖定畫面與 CarPlay 的歌詞會在鎖定後停住。收起：Spotify 停止 30 秒、暫停 5 分鐘後自動結束；連著 CarPlay 時暫停不收（得來速、等人都沒事），沒在播放 30 分鐘才收；講電話不算閒置。")
         }
     }
 
     private func footer(for mode: LiveActivityMode) -> String {
         switch mode {
         case .whileDriving:
-            return "連上 CarPlay 才顯示，平常動態島保持乾淨，下車自動收起。iOS 只允許 App 打開時開始顯示，所以上車後要打開一次 CarLyrics——到「設定檢查」設定捷徑自動化，上車就會自動打開。"
+            return "連上 CarPlay 才顯示，平常動態島保持乾淨，下車自動收起。iOS 只允許 App 打開時開始顯示，所以上車後要打開一次 CarLyrics——到「設定檢查」設定捷徑自動化。上車後鎖定畫面沒有歌詞時，打開 CarLyrics 一下、或按上面的「現在顯示鎖定畫面歌詞」。"
         case .always:
             return "播歌時在鎖定畫面顯示歌詞。iOS 會同時在動態島放一個小圖示（系統規定，無法關閉）；沒在播放一陣子後會自動收起。"
         case .off:

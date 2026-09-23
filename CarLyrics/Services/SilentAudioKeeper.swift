@@ -44,15 +44,26 @@ final class SilentAudioKeeper {
     /// 目前的輸出是不是車上的音響
     private(set) var isCarConnected = SilentAudioKeeper.detectCar()
 
+    /// 只認 CarPlay / 車用音訊（`.carAudio`）。一般藍牙（`.bluetoothA2DP`）耳機和喇叭也會用，
+    /// 不能當成在車上；車機只回報一般藍牙時，由設定頁的「現在顯示鎖定畫面歌詞」手動開
     static func detectCar() -> Bool {
         AVAudioSession.sharedInstance().currentRoute.outputs.contains { $0.portType == .carAudio }
     }
 
-    private func updateCarConnection() {
+    /// 目前音訊輸出的名稱（診斷用，例如「CarPlay」「揚聲器」或車機的藍牙名稱）
+    static func outputDescription() -> String {
+        let outputs = AVAudioSession.sharedInstance().currentRoute.outputs
+        return outputs.isEmpty ? "（無）" : outputs.map(\.portName).joined(separator: ", ")
+    }
+
+    /// 重新確認是不是接著車用音訊；有改變才回呼。
+    /// 路由改變通知只在 App 活著時送達：閒置停止後被暫停、早上才接上 CarPlay 的情況會漏掉，
+    /// 所以回到前景與音訊 session 啟用成功後都要主動查一次。
+    func refreshCarConnection() {
         let car = Self.detectCar()
         guard car != isCarConnected else { return }
         isCarConnected = car
-        debugLog(car ? "車用音訊：已連接" : "車用音訊：已離開")
+        debugLog(car ? "車用音訊：已連接（\(Self.outputDescription())）" : "車用音訊：已離開（\(Self.outputDescription())）")
         onCarConnectionChanged?(car)
     }
 
@@ -83,7 +94,7 @@ final class SilentAudioKeeper {
                 if reason == .newDeviceAvailable || reason == .oldDeviceUnavailable {
                     debugLog("音訊路由改變（reason \(raw)）")
                 }
-                self?.updateCarConnection()
+                self?.refreshCarConnection()
                 self?.scheduleCheck(reason: "路由改變")
             }
         })
@@ -205,6 +216,8 @@ final class SilentAudioKeeper {
             lastAttemptAt = nil
             interrupted = false
             if !quiet { debugLog("背景音訊執行中（\(Int(format.sampleRate)) Hz）") }
+            // session 啟用後路由才確定：補抓被暫停期間漏掉的車用音訊連接 / 離開
+            refreshCarConnection()
         } catch {
             debugLog("背景音訊啟動失敗：\(error.localizedDescription)")
         }

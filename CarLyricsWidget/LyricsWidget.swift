@@ -15,7 +15,7 @@ struct LyricsEntry: TimelineEntry {
     static func sample(date: Date = .now) -> LyricsEntry {
         LyricsEntry(date: date,
                     frame: LyricsTimelineFrame(date: date, index: 0, current: "示範歌詞第一句",
-                                               upcoming: ["示範歌詞第二句", "示範歌詞第三句"]),
+                                               upcoming: ["示範歌詞第二句", "示範歌詞第三句", "示範歌詞第四句"]),
                     title: "示範歌曲", isPlaying: true, mode: .paragraph,
                     playbackInterval: date.addingTimeInterval(-60)...date.addingTimeInterval(120),
                     artworkFile: nil)
@@ -37,14 +37,18 @@ struct LyricsProvider: TimelineProvider {
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<LyricsEntry>) -> Void) {
-        LyricsTimelineStore.recordRender()
-        let list = entries(now: .now)
+        let now = Date()
+        let snapshot = LyricsTimelineStore.load()
+        let list = entries(now: now, snapshot: snapshot)
+        // 診斷：系統多晚才執行 App 的重新整理要求（now − App 寫入時刻）、這次交出幾格、從第幾句開始
+        LyricsTimelineStore.recordRender(snapshotUpdatedAt: snapshot?.updatedAt, entryCount: list.count,
+                                         firstIndex: list.first?.frame.index, now: now)
         // App 在狀態改變時會主動重新整理，所以時間軸播完就停
         completion(Timeline(entries: list.isEmpty ? [.sample()] : list, policy: .never))
     }
 
-    private func entries(now: Date) -> [LyricsEntry] {
-        let snapshot = LyricsTimelineStore.load() ?? .idle("打開 CarLyrics 開始同步歌詞", at: now)
+    private func entries(now: Date, snapshot: LyricsTimelineSnapshot? = nil) -> [LyricsEntry] {
+        let snapshot = snapshot ?? LyricsTimelineStore.load() ?? .idle("打開 CarLyrics 開始同步歌詞", at: now)
         return snapshot.frames(from: now).map {
             LyricsEntry(date: $0.date, frame: $0, title: snapshot.title, isPlaying: snapshot.isPlaying,
                         mode: snapshot.mode, playbackInterval: snapshot.playbackInterval,
@@ -67,7 +71,7 @@ struct LyricsWidgetView: View {
     private var content: some View {
         switch family {
         case .accessoryRectangular:
-            // 鎖定畫面
+            // 鎖定畫面：只有三行的高度，段落模式也只列下一句（目前句 2 行 + 下一句 1 行）
             VStack(alignment: .leading, spacing: 1) {
                 Text(entry.frame.current)
                     .font(.headline)
@@ -82,35 +86,74 @@ struct LyricsWidgetView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         default:
-            // CarPlay 小工具頁 / 主畫面：大字、最多三行
-            VStack(alignment: .leading, spacing: 5) {
-                header
-                if let countdown = entry.frame.countdownInterval(from: entry.date) {
-                    // 間奏：由系統自己倒數，不需要任何更新
-                    HStack(spacing: 4) {
-                        Text("♪ 下一句")
-                        Text(timerInterval: countdown, countsDown: true)
-                            .monospacedDigit()
+            // CarPlay 小工具頁 / 主畫面（systemSmall）
+            Group {
+                if entry.mode == .paragraph {
+                    // 段落模式：一格涵蓋一個時間窗，接下來最多 4 句；放不下就少列幾句，不要截掉
+                    ViewThatFits(in: .vertical) {
+                        paragraphLayout(upcomingCap: LyricsTimelineSnapshot.paragraphMaxUpcoming)
+                        paragraphLayout(upcomingCap: 3)
+                        paragraphLayout(upcomingCap: LyricsTimelineSnapshot.paragraphMinUpcoming)
+                        paragraphLayout(upcomingCap: 1)
                     }
-                    .font(.system(.title3, design: .rounded, weight: .bold))
-                    .lineLimit(1)
                 } else {
-                    Text(entry.frame.current)
-                        .font(.system(.title3, design: .rounded, weight: .bold))
-                        .lineLimit(entry.mode == .paragraph ? 2 : 3)
-                        .minimumScaleFactor(0.6)
-                        .contentTransition(.opacity)
+                    perLineLayout
                 }
-                Spacer(minLength: 0)
-                ForEach(Array(entry.frame.upcoming.enumerated()), id: \.offset) { i, line in
-                    Text(line)
-                        .font(.caption)
-                        .foregroundStyle(i == 0 ? Color.secondary : Color.secondary.opacity(0.6))
-                        .lineLimit(entry.mode == .paragraph ? 1 : 2)
-                }
-                progress
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+    }
+
+    /// 逐句模式：大字、目前句最多三行、下一句一行
+    private var perLineLayout: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            header
+            currentLine(lineLimit: 3, minimumScale: 0.6)
+            Spacer(minLength: 0)
+            ForEach(Array(entry.frame.upcoming.enumerated()), id: \.offset) { i, line in
+                Text(line)
+                    .font(.caption)
+                    .foregroundStyle(i == 0 ? Color.secondary : Color.secondary.opacity(0.6))
+                    .lineLimit(2)
+            }
+            progress
+        }
+    }
+
+    /// 段落模式：目前句最多兩行，接下來的句子各一行、越後面越淡
+    private func paragraphLayout(upcomingCap: Int) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            header
+            currentLine(lineLimit: 2, minimumScale: 0.7)
+            ForEach(Array(entry.frame.upcoming.prefix(upcomingCap).enumerated()), id: \.offset) { i, line in
+                Text(line)
+                    .font(.caption)
+                    .foregroundStyle(Color.secondary.opacity(i == 0 ? 1 : max(0.45, 0.85 - Double(i) * 0.15)))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+            }
+            Spacer(minLength: 0)
+            progress
+        }
+    }
+
+    /// 目前句；間奏時改成由系統自己倒數到下一句（不需要任何更新）
+    @ViewBuilder
+    private func currentLine(lineLimit: Int, minimumScale: CGFloat) -> some View {
+        if let countdown = entry.frame.countdownInterval(from: entry.date) {
+            HStack(spacing: 4) {
+                Text("♪ 下一句")
+                Text(timerInterval: countdown, countsDown: true)
+                    .monospacedDigit()
+            }
+            .font(.system(.title3, design: .rounded, weight: .bold))
+            .lineLimit(1)
+        } else {
+            Text(entry.frame.current)
+                .font(.system(.title3, design: .rounded, weight: .bold))
+                .lineLimit(lineLimit)
+                .minimumScaleFactor(minimumScale)
+                .contentTransition(.opacity)
         }
     }
 

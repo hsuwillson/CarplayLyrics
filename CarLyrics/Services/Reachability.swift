@@ -41,8 +41,4 @@ final class Reachability {
         }
         monitor.start(queue: DispatchQueue(label: "CarLyrics.Reachability"))
     }
-
-    func stop() {
-        monitor.cancel()
-    }
 }

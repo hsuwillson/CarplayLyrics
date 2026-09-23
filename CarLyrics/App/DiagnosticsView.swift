@@ -61,7 +61,7 @@ struct DiagnosticsView: View {
             }
             .buttonStyle(.borderedProminent)
         } footer: {
-            Text("會附上目前所有狀態（不含帳號或密碼）與完整紀錄。出問題時先別關 App，直接按這裡。")
+            Text("會附上目前所有狀態與完整紀錄（含歌名／歌手與歌詞搜尋，不含帳號或密碼）。出問題時先別關 App，直接按這裡。")
         }
     }
 
@@ -77,7 +77,8 @@ struct DiagnosticsView: View {
                     ok: model.audioKeeper.isRunning || !model.backgroundEnabled)
             DiagRow("即時動態", value: model.liveActivity.stateDescription,
                     ok: model.liveActivity.isActive || !model.liveActivityEnabled)
-            DiagRow("小工具", value: model.widget.modeDescription, ok: model.widget.mode == .perLine)
+            DiagRow("小工具", value: LyricsTimelineStore.neverRendered ? "尚未加入任何畫面" : model.widget.modeDescription,
+                    ok: model.widget.mode == .perLine)
             DiagRow("歌詞", value: model.lyrics.state.label, ok: model.hasSyncedLyrics)
         }
     }
@@ -106,13 +107,27 @@ struct DiagnosticsView: View {
             }
             LabeledContent("即時動態權限", value: model.activitiesEnabled ? "已允許" : "未允許")
             LabeledContent("耗電狀態", value: model.power.description)
+            LabeledContent("電源", value: Self.batteryLabel(UIDevice.current.batteryState))
             LabeledContent("車用音訊", value: model.isCarConnected ? "已連接" : "未連接")
+        }
+    }
+
+    /// 充電中時輪詢會用前景的間隔（車上多半插著充電）
+    private static func batteryLabel(_ s: UIDevice.BatteryState) -> String {
+        switch s {
+        case .charging: return "充電中"
+        case .full: return "已充飽"
+        case .unplugged: return "電池"
+        default: return "未知"
         }
     }
 
     private var backgroundSection: some View {
         Section {
             LabeledContent("無聲音訊", value: model.audioKeeper.isRunning ? "執行中" : "停止")
+            if model.audioKeeper.interrupted {
+                LabeledContent("音訊中斷", value: "中（講電話 / Siri）")
+            }
             LabeledContent("重啟次數", value: "\(model.audioKeeper.restartCount)")
             if let reason = model.audioKeeper.lastRestartReason,
                let at = model.audioKeeper.lastRestartAt {
@@ -121,15 +136,20 @@ struct DiagnosticsView: View {
             }
             LabeledContent("最近輪詢", value: model.lastPollAt.map { "\(Int(now.timeIntervalSince($0))) 秒前" } ?? "—")
             LabeledContent("最長輪詢間隔", value: String(format: "%.1f 秒", model.maxPollGap))
+            LabeledContent("輪詢往返（最近 / 最長）",
+                           value: String(format: "%.2f / %.2f 秒", model.lastPollRoundTrip, model.maxPollRoundTrip))
             LabeledContent("回應大小", value: "\(model.lastResponseBytes) bytes")
             if let error = model.lastErrorDetail {
                 LabeledContent("最近錯誤", value: error).font(.caption)
             }
-            Button("重設統計") { model.resetDiagnostics() }
+            Button("重設統計") {
+                model.resetDiagnostics()
+                LyricsTimelineStore.resetRenderLagStats()
+            }
         } header: {
             Text("背景執行")
         } footer: {
-            Text("沒有播放 10 分鐘、或暫停 30 分鐘後，會自動停止背景執行以省電；下次打開 App 會自動恢復。")
+            Text("省電：沒有播放 10 分鐘、暫停 30 分鐘、廣告／Podcast 60 分鐘後停止背景執行（連著 CarPlay 時放寬 3 倍；講電話不算）；下次打開 App 會自動恢復。")
         }
     }
 
@@ -138,6 +158,10 @@ struct DiagnosticsView: View {
             LabeledContent("狀態", value: model.liveActivity.stateDescription)
             LabeledContent("更新次數", value: "\(model.liveActivity.updateCount)")
             LabeledContent("系統套用 / 被擋", value: "\(model.liveActivity.acceptedCount) / \(model.liveActivity.rejectedCount)")
+            LabeledContent("未驗證", value: "\(model.liveActivity.verifySkipped)")
+            if model.liveActivity.backgroundBlocked {
+                LabeledContent("背景更新", value: "被擋（每 15 秒探測一次）")
+            }
             if let at = model.liveActivity.lastRejectedAt {
                 LabeledContent("最近被擋", value: at.formatted(date: .omitted, time: .standard))
             }
@@ -156,7 +180,7 @@ struct DiagnosticsView: View {
         } header: {
             Text("即時動態")
         } footer: {
-            Text("iOS 最多讓即時動態持續 8 小時；長途中途打開 App 時會自動換新。")
+            Text("「未驗證」= 送出後 2 秒內又有新內容，來不及確認系統有沒有套用（歌詞密集時很常見，不是問題）。iOS 最多讓即時動態持續 8 小時；長途中途打開 App 時會自動換新。")
         }
     }
 
@@ -170,10 +194,21 @@ struct DiagnosticsView: View {
             if let at = model.widget.lastRenderAt {
                 LabeledContent("系統最後重新整理", value: at.formatted(date: .omitted, time: .standard))
             }
+            if let lag = LyricsTimelineStore.lastRenderLag {
+                LabeledContent("重新整理延遲（最近 / 最大）",
+                               value: String(format: "%.1f / %.1f 秒", lag, LyricsTimelineStore.maxRenderLag ?? lag))
+            }
+            if let count = LyricsTimelineStore.lastRenderEntryCount {
+                LabeledContent("最近交出的格數",
+                               value: LyricsTimelineStore.lastRenderFirstIndex.map { "\(count)（從第 \($0 + 1) 句起）" } ?? "\(count)")
+            }
+            if LyricsTimelineStore.neverRendered {
+                LabeledContent("狀態", value: "尚未加入任何畫面")
+            }
         } header: {
             Text("小工具")
         } footer: {
-            Text("「實際」遠少於「要求」代表系統在節流；App 會自動改用一次顯示一段的段落模式。")
+            Text("「實際」遠少於「要求」代表系統在節流；App 會自動改用一次顯示一段的段落模式。「延遲」= App 寫入時間軸到系統真的來拿之間隔了多久（只算 5 分鐘內的）。")
         }
     }
 

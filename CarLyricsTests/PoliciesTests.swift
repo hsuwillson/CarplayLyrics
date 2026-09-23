@@ -138,6 +138,31 @@ final class WidgetReloadPolicyTests: XCTestCase {
         }
         XCTAssertFalse(p.allowLineReload(now: t, isForeground: false, renderCount: 0))
     }
+
+    /// P2-20：小工具從來沒被畫過（多半是沒加到任何畫面）→ 不做節流判定，不要誤判成段落模式
+    func testNeverRenderedSkipsThrottleVerdict() {
+        var p = WidgetReloadPolicy()
+        var t = t0
+        for _ in 0..<30 {
+            XCTAssertTrue(p.allowLineReload(now: t, isForeground: false, renderCount: 0, neverRendered: true))
+            t = t.addingTimeInterval(3)
+        }
+        XCTAssertEqual(p.mode(now: t), .perLine)
+        XCTAssertNil(p.lastWindowResult)
+        // 小工具加入後才開始量測：第一次量的視窗從這裡起算，不受前面 30 次影響
+        for _ in 0..<10 {
+            XCTAssertTrue(p.allowLineReload(now: t, isForeground: false, renderCount: 1))
+            t = t.addingTimeInterval(3)
+        }
+        XCTAssertFalse(p.allowLineReload(now: t, isForeground: false, renderCount: 1))
+        XCTAssertEqual(p.lastWindowResult?.rendered, 0)
+        XCTAssertEqual(p.mode(now: t), .paragraph)
+        // 每小時上限仍然算數
+        var capped = WidgetReloadPolicy(hourlyCap: 1)
+        XCTAssertTrue(capped.allowLineReload(now: t0, isForeground: false, renderCount: 0, neverRendered: true))
+        XCTAssertFalse(capped.allowLineReload(now: t0.addingTimeInterval(5), isForeground: false, renderCount: 0,
+                                              neverRendered: true))
+    }
 }
 
 final class PollSurfaceTests: XCTestCase {
@@ -170,10 +195,26 @@ final class PollSurfaceTests: XCTestCase {
         let idle = IdlePolicy()
         let t0 = Date(timeIntervalSince1970: 0)
         XCTAssertEqual(idle.activityEndDelay(for: .nothing), 30)
-        XCTAssertEqual(idle.activityEndDelay(for: .nothing, carConnected: true), 300)
+        // P0-1：在車上「沒在播放」放寬到暫停的停止門檻（原本 300 秒）
+        XCTAssertEqual(idle.activityEndDelay(for: .nothing, carConnected: true), 1800)
+        XCTAssertEqual(idle.activityEndDelay(for: .paused), 300)
         XCTAssertNil(idle.activityEndDelay(for: .nonMusic))
         XCTAssertFalse(idle.shouldEndActivity(kind: .nothing, since: t0, now: t0.addingTimeInterval(100), hasPlayed: false))
         XCTAssertTrue(idle.shouldEndActivity(kind: .nothing, since: t0, now: t0.addingTimeInterval(100)))
+    }
+
+    /// P0-1：在車上暫停（得來速、講電話）永遠不收即時動態——背景收掉之後開不回來
+    func testPausedInCarNeverEndsActivity() {
+        let idle = IdlePolicy()
+        let t0 = Date(timeIntervalSince1970: 0)
+        XCTAssertNil(idle.activityEndDelay(for: .paused, carConnected: true))
+        XCTAssertFalse(idle.shouldEndActivity(kind: .paused, since: t0, now: t0.addingTimeInterval(99_999),
+                                              carConnected: true))
+        XCTAssertTrue(idle.shouldEndActivity(kind: .paused, since: t0, now: t0.addingTimeInterval(301)))
+        XCTAssertFalse(idle.shouldEndActivity(kind: .nothing, since: t0, now: t0.addingTimeInterval(1700),
+                                              carConnected: true))
+        XCTAssertTrue(idle.shouldEndActivity(kind: .nothing, since: t0, now: t0.addingTimeInterval(1800),
+                                             carConnected: true))
     }
 
     func testHotWindow() {

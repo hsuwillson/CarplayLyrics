@@ -62,7 +62,7 @@ struct SetupChecklistView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Label("上車自動打開 CarLyrics", systemImage: "wand.and.stars")
                         .font(.headline)
-                    Text("iOS 只允許 App 打開時開始顯示鎖定畫面與 CarPlay 歌詞。設一次捷徑自動化，之後每次上車都會自動打開，不用手動。")
+                    Text("iOS 只允許 App 打開時開始顯示鎖定畫面與 CarPlay 歌詞。設一次捷徑自動化，之後每次上車都會自動打開。")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                     VStack(alignment: .leading, spacing: 4) {
@@ -71,6 +71,14 @@ struct SetupChecklistView: View {
                                 .font(.subheadline)
                         }
                     }
+                    // iOS 在手機鎖定時不一定會真的把 App 叫到前景（實測前先不要說死）：給一個保險做法
+                    Label {
+                        Text("手機鎖著時自動化不一定會打開 App。上車後鎖定畫面沒有歌詞：點一下自動化的通知、或打開 CarLyrics 一次；還是沒有就到「設定」按「現在顯示鎖定畫面歌詞」。")
+                    } icon: {
+                        Image(systemName: "info.circle")
+                    }
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
                     Button {
                         if let url = URL(string: "shortcuts://") { openURL(url) }
                     } label: {

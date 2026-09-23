@@ -3,7 +3,8 @@ import SwiftUI
 import WidgetKit
 
 /// 歌詞即時動態（只顯示歌詞：播放控制交給鎖定畫面上的 Spotify）
-/// - 鎖定畫面：一行小字歌名 + 目前句（大字、最多三行）+ 下一句
+/// - 鎖定畫面：一行小字歌名 + 目前句（大字、最多三行）+ 細的逐句進度條（系統自己推進，
+///   在動就代表即時動態還活著）+ 下一句 + 再下一句
 /// - CarPlay / Apple Watch：`.small` activity family（iOS 26 CarPlay 使用這個尺寸），目前句 + 下一句 + 細進度條
 /// - 動態島：只放一個小圖示。即時動態進行中時系統一定會佔用動態島，無法關閉，
 ///   所以這裡刻意不放歌詞、不放按鈕，把佔用面積壓到最小；沒在播放時會自動收起（見 IdlePolicy）
@@ -83,14 +84,35 @@ private struct ActivityProgress: View {
 
     var body: some View {
         if let interval = state.playbackInterval {
-            ProgressView(timerInterval: interval, countsDown: false) {
-                EmptyView()
-            } currentValueLabel: {
-                EmptyView()
-            }
-            .progressViewStyle(.linear)
-            .tint(.green)
+            TimerBar(interval: interval, tint: .green)
         }
+    }
+}
+
+/// 目前句的進度（鎖定畫面用）：從這句開始到下一句開始，系統自己推進。
+/// 一眼就能分辨「還在動」與「停在滿格＝沒跟上」；沒有下一句（最後一句、間奏）時不顯示
+private struct LineProgress: View {
+    let state: LyricsActivityAttributes.ContentState
+
+    var body: some View {
+        if let interval = state.lineProgressInterval {
+            TimerBar(interval: interval, tint: .secondary)
+        }
+    }
+}
+
+private struct TimerBar: View {
+    let interval: ClosedRange<Date>
+    let tint: Color
+
+    var body: some View {
+        ProgressView(timerInterval: interval, countsDown: false) {
+            EmptyView()
+        } currentValueLabel: {
+            EmptyView()
+        }
+        .progressViewStyle(.linear)
+        .tint(tint)
     }
 }
 
@@ -201,7 +223,7 @@ private struct SmallActivityView: View {
     }
 }
 
-/// 鎖定畫面：只放歌詞（封面、進度條、播放按鈕 Spotify 自己的卡片都有了）
+/// 鎖定畫面：只放歌詞（封面、歌曲進度條、播放按鈕 Spotify 自己的卡片都有了）
 private struct LockScreenActivityView: View {
     let state: LyricsActivityAttributes.ContentState
     let isStale: Bool
@@ -211,6 +233,11 @@ private struct LockScreenActivityView: View {
             header
             CurrentLineView(state: state, font: .system(.title, design: .rounded, weight: .heavy),
                             isStale: isStale, lineLimit: 3)
+            if !isStale {
+                // 細的逐句進度條：更新沒跟上時它會停在滿格，比文字更容易一眼看出
+                LineProgress(state: state)
+                    .frame(height: 3)
+            }
             if isStale {
                 Text(staleMessage)
                     .font(.caption.weight(.medium))
@@ -220,6 +247,12 @@ private struct LockScreenActivityView: View {
                     .font(.headline)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                if let next2 = state.nextLine2, !next2.isEmpty {
+                    Text(next2)
+                        .font(.subheadline)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

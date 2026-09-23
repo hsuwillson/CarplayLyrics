@@ -100,6 +100,7 @@ private struct MainScreen: View {
             if let notice = model.notice {
                 NoticeBanner(notice: notice) { model.perform($0) }
             }
+            LiveActivityHint()
             NowPlayingHero()
             LyricsStage(openPicker: { picker = PickerRequest(openImporter: $0) })
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -196,6 +197,58 @@ private struct ConnectionStatusBar: View {
             }
         }
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// 鎖定畫面 / CarPlay 歌詞（即時動態）現在為什麼沒有顯示，以及手動開始的按鈕：
+/// -「開車時」模式在家：說明連上 CarPlay 後才會顯示；車子沒被認出來時可以手動開始
+/// - 其他情況播歌中卻沒有即時動態（背景開始失敗、系統沒允許）：一鍵補開
+private struct LiveActivityHint: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        if model.auth.isLoggedIn, model.liveActivityMode != .off, model.nowPlaying != nil, !model.session.isNonMusic {
+            // liveActivity 不是 @Observable：每 2 秒看一次即時動態有沒有開始，開始了這一列就消失
+            TimelineView(.periodic(from: .now, by: 2)) { _ in
+                row
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var row: some View {
+        if !model.liveActivity.isActive {
+            HStack(spacing: Theme.Spacing.s) {
+                Image(systemName: "lock.iphone")
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+                Text(message)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.85)
+                Spacer(minLength: Theme.Spacing.s)
+                if model.activitiesEnabled {
+                    Button("現在顯示") { model.startLiveActivityNow() }
+                        .accessibilityLabel("現在顯示鎖定畫面歌詞")
+                } else {
+                    Button("開啟設定") { model.perform(.openSettings) }
+                        .accessibilityLabel("開啟系統設定允許即時動態")
+                }
+            }
+            .buttonStyle(.glass)
+            .controlSize(.small)
+            .font(.footnote.weight(.semibold))
+            .accessibilityElement(children: .contain)
+        }
+    }
+
+    private var message: String {
+        if !model.activitiesEnabled { return "鎖定畫面歌詞：系統未允許即時動態" }
+        if model.liveActivityMode == .whileDriving, !model.isCarConnected {
+            return "鎖定畫面歌詞：連上 CarPlay 後顯示"
+        }
+        return "鎖定畫面歌詞：尚未開始"
     }
 }
 

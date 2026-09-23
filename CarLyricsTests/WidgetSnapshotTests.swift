@@ -25,12 +25,13 @@ final class WidgetSnapshotTests: XCTestCase {
         XCTAssertFalse(snapshot().isSameTimeline(as: b))
     }
 
-    func testParagraphModeShowsTwoUpcoming() {
+    /// 段落模式一格涵蓋 12 秒 → 列出時間窗內會開始的句子（最多 4 句）；逐句模式仍只有下一句
+    func testParagraphModeShowsWindowOfUpcoming() {
         var s = snapshot()
         s.mode = .paragraph
         let f = s.frames(from: t0.addingTimeInterval(1.5))
         XCTAssertEqual(f[0].current, "測試第1句")
-        XCTAssertEqual(f[0].upcoming, ["測試第2句", "測試第3句"])
+        XCTAssertEqual(f[0].upcoming, ["測試第2句", "測試第3句", "測試第4句", "測試第5句"])
         XCTAssertEqual(snapshot().frames(from: t0.addingTimeInterval(1.5))[0].upcoming, ["測試第2句"])
     }
 

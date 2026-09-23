@@ -105,18 +105,6 @@ final class Preferences {
         set { defaults.set(newValue, forKey: Key.liveActivityOnlyInCar) }
     }
 
-    /// 設定頁的三選一，存成原本的兩個開關（升級不會遺失設定）
-    var liveActivityMode: LiveActivityMode {
-        get {
-            guard liveActivityEnabled else { return .off }
-            return liveActivityOnlyInCar ? .whileDriving : .always
-        }
-        set {
-            liveActivityEnabled = newValue != .off
-            liveActivityOnlyInCar = newValue == .whileDriving
-        }
-    }
-
     /// Wi-Fi 時預先載入整個播放佇列的歌詞（進隧道 / 地下停車場也有歌詞）
     var prefetchQueueOnWiFi: Bool {
         get { bool(Key.prefetchQueueOnWiFi, default: true) }

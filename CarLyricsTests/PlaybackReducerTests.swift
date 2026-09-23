@@ -8,10 +8,12 @@ final class PlaybackReducerTests: XCTestCase {
 
     private func context(_ dt: TimeInterval = 0, foreground: Bool = false, car: Bool = false,
                          activity: Bool = true, endWhenIdle: Bool = false,
-                         surface: PollPolicy.Surface = .foreground) -> PlaybackReducer.Context {
+                         surface: PollPolicy.Surface = .foreground,
+                         interrupted: Bool = false) -> PlaybackReducer.Context {
         PlaybackReducer.Context(now: t0.addingTimeInterval(dt), isForeground: foreground,
                                 carConnected: car, activityIsActive: activity,
-                                endActivityWhenIdle: endWhenIdle, surface: surface)
+                                endActivityWhenIdle: endWhenIdle, surface: surface,
+                                interrupted: interrupted)
     }
 
     private func play(_ np: NowPlaying, at dt: TimeInterval) -> PlayerPollResult {
@@ -76,6 +78,21 @@ final class PlaybackReducerTests: XCTestCase {
         let out = send(play(Fixture.nowPlaying(progress: 11), at: 1.5), context(1.5))
         XCTAssertEqual(out.effects, [.log("樂觀更新保護：忽略延遲的回應")])
         XCTAssertTrue(state.preferFullPlayerEndpoint)
+    }
+
+    /// P2-4：使用者按了暫停（樂觀狀態 = 暫停）→ 保護窗內回傳「播放中」被忽略時，
+    /// session 也不能先翻成播放中，否則狀態列會閃一下「播放中」而按鈕還是 ▶
+    func testOptimisticGuardKeepsSessionUntilConfirmed() {
+        send(play(Fixture.nowPlaying(progress: 10), at: 0), context())
+        state.session = .paused
+        state.optimistic.arm(now: t0.addingTimeInterval(1))
+        state.engine.update(PlaybackSnapshot(trackID: "track1", progress: 10, duration: 200,
+                                             isPlaying: false, timestamp: t0.addingTimeInterval(1)))
+        send(play(Fixture.nowPlaying(progress: 11), at: 1.5), context(1.5))
+        XCTAssertEqual(state.session, .paused)
+        // 保護窗過了，Spotify 真的回報播放中 → 才跟著變
+        send(play(Fixture.nowPlaying(progress: 13), at: 3.5), context(3.5))
+        XCTAssertEqual(state.session, .playing)
     }
 
     func testNearTrackEndPollsSooner() {
@@ -268,13 +285,55 @@ final class PlaybackReducerTests: XCTestCase {
         XCTAssertFalse(state.hasPlayed)
     }
 
-    /// 連著車用音訊時「沒在播放」改用 5 分鐘門檻
+    /// 連著車用音訊時「沒在播放」改用暫停的停止門檻（30 分鐘）。
+    /// P0-1 之前是 5 分鐘：切換音源、等人的時候即時動態就沒了，而且背景開不回來。
     func testCarConnectedNothingUsesPauseThreshold() {
         send(play(Fixture.nowPlaying(), at: 0), context(0, car: true, endWhenIdle: true))
         send(.nothing, context(1, car: true, endWhenIdle: true))
         send(.nothing, context(10, car: true, endWhenIdle: true))
         XCTAssertFalse(send(.nothing, context(60, car: true, endWhenIdle: true)).effects.contains(.endActivity))
-        XCTAssertTrue(send(.nothing, context(400, car: true, endWhenIdle: true)).effects.contains(.endActivity))
+        XCTAssertFalse(send(.nothing, context(400, car: true, endWhenIdle: true)).effects.contains(.endActivity))
+        XCTAssertFalse(send(.nothing, context(1700, car: true, endWhenIdle: true)).effects.contains(.endActivity))
+        // 閒置從第二次「沒在播放」（10 秒）起算；前景不會走「閒置停止」，
+        // 所以這裡的 endActivity 純粹來自即時動態的閒置門檻
+        let out = send(.nothing, context(1815, foreground: true, car: true, endWhenIdle: true))
+        XCTAssertEqual(out.effects, [.endActivity])
+    }
+
+    /// P0-1：在車上暫停 20 分鐘（得來速、等人、講電話）→ 即時動態留著，整趟車都還有歌詞
+    func testPausedInCarKeepsActivity() {
+        send(play(Fixture.nowPlaying(), at: 0), context(0, car: true, endWhenIdle: true))
+        let paused = Fixture.nowPlaying(playing: false)
+        send(play(paused, at: 0.5), context(0.5, car: true, endWhenIdle: true))
+        for dt in [120.0, 400, 1200, 1700] {
+            let out = send(play(paused, at: dt), context(dt, car: true, endWhenIdle: true))
+            XCTAssertFalse(out.effects.contains(.endActivity), "\(Int(dt)) 秒")
+            XCTAssertFalse(out.effects.contains(.stopForIdle(minutes: 90)), "\(Int(dt)) 秒")
+        }
+        XCTAssertFalse(state.activityEndedForIdle)
+        // 不在車上的舊行為不變：5 分鐘後收
+        XCTAssertTrue(send(play(paused, at: 1800), context(1800, endWhenIdle: true)).effects.contains(.endActivity))
+    }
+
+    /// P0-1：音訊中斷中（講電話）不算閒置：不收即時動態、也不停止背景執行
+    func testInterruptionNeverEndsOrStops() {
+        send(play(Fixture.nowPlaying(), at: 0), context(0, endWhenIdle: true))
+        let paused = Fixture.nowPlaying(playing: false)
+        send(play(paused, at: 1), context(1, endWhenIdle: true, interrupted: true))
+        let later = send(play(paused, at: 400), context(400, endWhenIdle: true, interrupted: true))
+        XCTAssertFalse(later.effects.contains(.endActivity))
+        XCTAssertFalse(state.activityEndedForIdle)
+        // 超過 30 分鐘的停止門檻也一樣
+        let long = send(play(paused, at: 1900), context(1900, endWhenIdle: true, interrupted: true))
+        XCTAssertFalse(long.effects.contains(.stopForIdle(minutes: 30)))
+        XCTAssertFalse(long.effects.contains(.endActivity))
+        XCTAssertEqual(long.delay, 20)
+        // 輪詢錯誤與「沒在播放」的路徑也受同一個保護
+        XCTAssertEqual(reducer.error(&state, context: context(1901, interrupted: true)).effects, [])
+        // 中斷結束（且 Spotify 還沒續播）→ 回到正常的閒置規則
+        let after = send(play(paused, at: 1902), context(1902, endWhenIdle: true))
+        XCTAssertEqual(after.effects.suffix(3), [.endActivity, .publishIdle("打開 CarLyrics 繼續同步歌詞"),
+                                                 .stopForIdle(minutes: 30)])
     }
 
     /// 設定關掉時維持舊行為：即時動態留著

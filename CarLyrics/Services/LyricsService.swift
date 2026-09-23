@@ -151,11 +151,14 @@ actor LyricsService: LyricsProviding {
             URLQueryItem(name: "album_name", value: q.album),
             URLQueryItem(name: "duration", value: String(Int(q.duration.rounded()))),
         ]
-        let (data, status) = try await request(get.url!)
-        try Self.checkAvailable(status)
-        if status == 200, let t = try? JSONDecoder().decode(LRCLIBTrack.self, from: data), let r = LyricsResult(track: t) {
-            debugLog("LRCLIB /get 命中")
-            return r
+        // 歌名／歌手來自 Spotify，URL 組不出來（理論上不會）就跳過 /get，直接放寬搜尋
+        if let url = get.url {
+            let (data, status) = try await request(url)
+            try Self.checkAvailable(status)
+            if status == 200, let t = try? JSONDecoder().decode(LRCLIBTrack.self, from: data), let r = LyricsResult(track: t) {
+                debugLog("LRCLIB /get 命中")
+                return r
+            }
         }
 
         // 放寬搜尋（連同 /get 最多 6 個請求），用歌曲長度過濾，找到就停。
@@ -165,7 +168,8 @@ actor LyricsService: LyricsProviding {
             try Task.checkCancellation()
             var search = URLComponents(string: "https://lrclib.net/api/search")!
             search.queryItems = items
-            let (sdata, sstatus) = try await request(search.url!)
+            guard let url = search.url else { continue }
+            let (sdata, sstatus) = try await request(url)
             try Self.checkAvailable(sstatus)
             guard sstatus == 200 else { continue }
             let list = (try? JSONDecoder().decode([LRCLIBTrack].self, from: sdata)) ?? []

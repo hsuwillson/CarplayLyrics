@@ -4,7 +4,8 @@ import Foundation
 enum LyricsTimelineMode: String, Codable, Sendable {
     /// App 每換一句就請系統重新整理：只顯示目前句 + 下一句
     case perLine
-    /// 系統節流時：顯示目前句 + 之後兩句，讓使用者看到有上下文的一段
+    /// 系統節流時：每一格涵蓋一個時間窗（目前句 + 這段時間內會開始的幾句），
+    /// 系統晚十幾秒才顯示這一格也還找得到正在唱的句子
     case paragraph
 }
 
@@ -62,8 +63,16 @@ struct LyricsTimelineSnapshot: Codable, Equatable, Sendable {
         return abs(songStart.timeIntervalSince(other.songStart)) >= 0.3
     }
 
-    /// 從 `now` 開始的畫面：第一個是現在，之後每換一句一個
-    func frames(from now: Date, limit: Int = 150) -> [LyricsTimelineFrame] {
+    /// 段落模式一格涵蓋的時間（秒）：實測系統大約每 10–20 秒才換一格
+    static let paragraphWindow: TimeInterval = 12
+    /// 段落模式一格至少 / 最多顯示幾句接下來的歌詞
+    static let paragraphMinUpcoming = 2
+    static let paragraphMaxUpcoming = 4
+
+    /// 從 `now` 開始的畫面：第一個是現在；逐句模式之後每換一句一格，段落模式每個時間窗一格。
+    /// - Parameter paragraphWindow: 段落模式一格涵蓋幾秒（系統換格更慢時可以放大）
+    func frames(from now: Date, limit: Int = 150,
+                paragraphWindow: TimeInterval = LyricsTimelineSnapshot.paragraphWindow) -> [LyricsTimelineFrame] {
         guard isPlaying, !lines.isEmpty else {
             // 小工具標題列已經有歌名：第二行放歌手，不要把歌名再重複一次（暫停、搜尋中、閒置都一樣）
             return [LyricsTimelineFrame(date: now, index: nil,
@@ -72,18 +81,57 @@ struct LyricsTimelineSnapshot: Codable, Equatable, Sendable {
         }
         let position = now.timeIntervalSince(songStart)
         let currentIndex = lines.index(at: position)
-        var result = [frame(at: now, index: currentIndex)]
-        let start = (currentIndex ?? -1) + 1
-        let upper = min(lines.count, start + limit)
-        if start < upper {
-            for j in start..<upper {
-                result.append(frame(at: songStart.addingTimeInterval(lines[j].time), index: j))
+        var result: [LyricsTimelineFrame] = []
+        var reachedEnd = false
+        if mode == .paragraph {
+            result = paragraphFrames(from: now, currentIndex: currentIndex, limit: limit,
+                                     window: paragraphWindow, reachedEnd: &reachedEnd)
+        } else {
+            result.append(frame(at: now, index: currentIndex, upcomingCount: 1))
+            let start = (currentIndex ?? -1) + 1
+            let upper = min(lines.count, start + limit)
+            if start < upper {
+                for j in start..<upper {
+                    result.append(frame(at: songStart.addingTimeInterval(lines[j].time), index: j, upcomingCount: 1))
+                }
             }
+            reachedEnd = upper >= lines.count
         }
         // 收尾：App 若被系統終止，時間軸播完不會停在最後一句假裝還在同步
-        if upper >= lines.count, let end = endOfSong, let last = result.last, end > last.date {
+        if reachedEnd, let end = endOfSong, let last = result.last, end > last.date {
             result.append(LyricsTimelineFrame(date: end, index: nil, current: "♪ 等待下一首",
                                               upcoming: ["沒跟上就打開 CarLyrics"]))
+        }
+        return result
+    }
+
+    /// 段落模式：一格 = 目前句 + 時間窗內會開始的句子（至少 2 句、最多 4 句）。
+    /// 下一格從「時間窗之後的第一句」或「這一格放不下的第一句」開始（取較早者），
+    /// 所以每一句開始的時刻都落在某一格裡，而且那一格一定列出了它。
+    /// `reachedEnd` = 這些格子已經涵蓋到最後一句（可以補「等待下一首」）。
+    private func paragraphFrames(from now: Date, currentIndex: Int?, limit: Int, window: TimeInterval,
+                                 reachedEnd: inout Bool) -> [LyricsTimelineFrame] {
+        var result: [LyricsTimelineFrame] = []
+        var date = now
+        var index = currentIndex
+        while true {
+            let from = (index ?? -1) + 1
+            let windowEnd = date.timeIntervalSince(songStart) + window
+            // 歌詞依時間排序：時間窗內的句子就是接下來連續的一段
+            let inWindow = lines[from...].prefix(while: { $0.time < windowEnd }).count
+            let count = min(lines.count - from,
+                            max(Self.paragraphMinUpcoming, min(Self.paragraphMaxUpcoming, inWindow)))
+            result.append(frame(at: date, index: index, upcomingCount: count))
+            // 時間窗之後的第一句 = from + inWindow；放不下的第一句 = from + count
+            let next = from + min(inWindow, count)
+            if next >= lines.count {
+                reachedEnd = true
+                break
+            }
+            // 與逐句模式一樣最多 limit + 1 格
+            if result.count > limit { break }
+            index = next
+            date = songStart.addingTimeInterval(lines[next].time)
         }
         return result
     }
@@ -94,9 +142,7 @@ struct LyricsTimelineSnapshot: Codable, Equatable, Sendable {
         return songStart.addingTimeInterval(appliedOffset + duration + 3)
     }
 
-    private var upcomingCount: Int { mode == .paragraph ? 2 : 1 }
-
-    private func frame(at date: Date, index: Int?) -> LyricsTimelineFrame {
+    private func frame(at date: Date, index: Int?, upcomingCount: Int) -> LyricsTimelineFrame {
         let from = (index ?? -1) + 1
         let upcoming = lines[min(from, lines.count)..<min(lines.count, from + upcomingCount)]
             .map(\.text).filter { !$0.isEmpty }
@@ -116,7 +162,7 @@ struct LyricsTimelineFrame: Equatable, Sendable {
     let date: Date
     let index: Int?
     let current: String
-    /// 之後要唱的句子（逐句模式 1 句、段落模式 2 句）
+    /// 之後要唱的句子（逐句模式 1 句、段落模式 2–4 句：時間窗內會開始的那些）
     let upcoming: [String]
     /// 下一句開始的真實時刻（間奏倒數用）
     var nextLineAt: Date?

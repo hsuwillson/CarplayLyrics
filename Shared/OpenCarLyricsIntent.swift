@@ -6,8 +6,9 @@ enum CarLyricsScreen: String, AppEnum {
     case lyrics
     case focus
 
-    static var typeDisplayRepresentation: TypeDisplayRepresentation = "CarLyrics 畫面"
-    static var caseDisplayRepresentations: [CarLyricsScreen: DisplayRepresentation] = [
+    // 用 let：Swift 6 不允許可變的全域／靜態變數（並行安全）
+    static let typeDisplayRepresentation: TypeDisplayRepresentation = "CarLyrics 畫面"
+    static let caseDisplayRepresentations: [CarLyricsScreen: DisplayRepresentation] = [
         .lyrics: "歌詞",
         .focus: "專注模式",
     ]
@@ -17,8 +18,8 @@ enum CarLyricsScreen: String, AppEnum {
 /// Apple 文件：開啟 App 的控制要用 `OpenIntent`，且 intent 必須同時屬於 App 與 Widget Extension，
 /// 所以放在 Shared/。
 struct OpenCarLyricsIntent: OpenIntent {
-    static var title: LocalizedStringResource = "開啟 CarLyrics"
-    static var description = IntentDescription("打開 CarLyrics 開始同步歌詞（讓鎖定畫面與 CarPlay 的即時動態可以啟動）。")
+    static let title: LocalizedStringResource = "開啟 CarLyrics"
+    static let description = IntentDescription("打開 CarLyrics 開始同步歌詞（讓鎖定畫面與 CarPlay 的即時動態可以啟動）。")
 
     @Parameter(title: "畫面", default: .lyrics)
     var target: CarLyricsScreen

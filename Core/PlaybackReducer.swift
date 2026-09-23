@@ -95,10 +95,14 @@ struct PlaybackReducer: Sendable {
         var endActivityWhenIdle: Bool
         /// 使用者看得到什麼（決定輪詢頻率）
         var surface: PollPolicy.Surface
+        /// 音訊被中斷中（電話、Siri）：Spotify 只是被迫暫停，講完會自動續播，
+        /// 這段時間不算閒置（不收即時動態、不停止背景執行）
+        var interrupted: Bool
 
         init(now: Date, monotonicNow: Date? = nil, isForeground: Bool = false,
              carConnected: Bool = false, activityIsActive: Bool = true,
-             endActivityWhenIdle: Bool = false, surface: PollPolicy.Surface = .foreground) {
+             endActivityWhenIdle: Bool = false, surface: PollPolicy.Surface = .foreground,
+             interrupted: Bool = false) {
             self.now = now
             self.monotonicNow = monotonicNow ?? now
             self.isForeground = isForeground
@@ -106,6 +110,7 @@ struct PlaybackReducer: Sendable {
             self.activityIsActive = activityIsActive
             self.endActivityWhenIdle = endActivityWhenIdle
             self.surface = surface
+            self.interrupted = interrupted
         }
     }
 
@@ -149,13 +154,12 @@ struct PlaybackReducer: Sendable {
         state.lastAcceptedSentAt = sentAt
         state.errorStreak = 0
         state.emptyResponseStreak = 0
-        // session 要先更新：廣告結束接回音樂時，推送不能被 .nonMusic 擋掉
         let leavingNonMusic = state.session.isNonMusic
-        state.session = np.isPlaying ? .playing : .paused
 
         let snapshot = PlaybackSnapshot(trackID: np.trackID, progress: np.progress, duration: np.duration,
                                         isPlaying: np.isPlaying, timestamp: measuredAt)
-        // 樂觀更新保護窗內，與目前狀態矛盾的回應視為 Spotify 還沒套用
+        // 樂觀更新保護窗內，與目前狀態矛盾的回應視為 Spotify 還沒套用（session 也不能跟著翻，
+        // 否則按了暫停之後狀態列會先閃一下「播放中」）
         if state.optimistic.shouldIgnore(current: state.engine.snapshot, incoming: snapshot, now: context.monotonicNow) {
             output.effects.append(.log("樂觀更新保護：忽略延遲的回應"))
             state.preferFullPlayerEndpoint = true
@@ -164,6 +168,8 @@ struct PlaybackReducer: Sendable {
                                             preferFullPlayer: true)
             return output
         }
+        // session 要在動作之前更新：廣告結束接回音樂時，推送不能被 .nonMusic 擋掉
+        state.session = np.isPlaying ? .playing : .paused
 
         let change = state.engine.update(snapshot)
         state.nowPlaying = np
@@ -276,9 +282,11 @@ struct PlaybackReducer: Sendable {
     /// 閒置一段時間 → 結束即時動態（動態島不要一直被佔用）。
     /// 與 appendIdleStop 不同：前景也會做，而且不停止背景執行，
     /// 下次 Spotify 開始播放時 App 會重新開一個即時動態。
+    /// 音訊中斷中（講電話）不算閒置：講完 Spotify 會自動續播，收掉的話背景開不回來。
     @discardableResult
     private func appendActivityEndForIdle(_ output: inout Output, _ state: inout PlaybackState,
                                           context: Context) -> Bool {
+        guard !context.interrupted else { return false }
         guard context.endActivityWhenIdle, context.activityIsActive, !state.activityEndedForIdle,
               let kind = state.idleKind, let since = state.idleSince,
               idlePolicy.shouldEndActivity(kind: kind, since: since, now: context.now,
@@ -289,9 +297,10 @@ struct PlaybackReducer: Sendable {
         return true
     }
 
-    /// 閒置太久 → 加上停止的動作，回傳 true
+    /// 閒置太久 → 加上停止的動作，回傳 true（音訊中斷中不算閒置）
     @discardableResult
     private func appendIdleStop(_ output: inout Output, _ state: inout PlaybackState, context: Context) -> Bool {
+        guard !context.interrupted else { return false }
         guard let kind = state.idleKind, let since = state.idleSince,
               idlePolicy.shouldStop(kind: kind, since: since, now: context.now,
                                     isForeground: context.isForeground, carConnected: context.carConnected)

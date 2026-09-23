@@ -7,7 +7,8 @@ import UIKit
 /// - iOS 只允許 App 在前景時「開始」即時動態；背景失敗後就不再重試，等回到前景
 /// - 更新依序送出（串成一條鏈），避免較舊的內容最後才到
 /// - 每次更新帶 staleDate；App 被系統終止後，畫面會顯示「暫停更新」
-/// - iOS 會擋掉只播背景音訊的 App 在背景的更新：連續被擋 5 次後，背景只在換歌 / 暫停時嘗試
+/// - iOS 會擋掉只播背景音訊的 App 在背景的更新：連續被擋 8 次後，背景只在換歌 / 暫停時嘗試，
+///   但每隔 15 秒仍放一次換句更新出去探測；一被套用就恢復逐句更新（系統只是慢、不是拒絕時能自癒）
 /// - 接近 8 小時上限且 App 在前景時，自動重新開始一個
 @MainActor
 final class LiveActivityManager {
@@ -32,6 +33,9 @@ final class LiveActivityManager {
     private(set) var lastRejectedAt: Date?
     /// 最近一次判定「沒有被套用」時，是哪個欄位不同（診斷用）
     private(set) var lastMismatchField: String?
+    /// 送出後還沒來得及驗證就被更新的內容蓋掉的次數（診斷用）。
+    /// 歌詞密集時大多數更新都驗不到，套用／被擋的數字才看得懂。
+    private(set) var verifySkipped = 0
     /// 背景被擋期間累積、還沒送出的內容
     private var hasUnsentState = false
     /// 背景更新被系統擋掉（回前景時清除）
@@ -80,6 +84,8 @@ final class LiveActivityManager {
         if activity == nil,
            let first = existing.first(where: { $0.activityState == .active || $0.activityState == .stale }) {
             activity = first
+            // 不知道它是什麼時候開始的：保守當成現在，8 小時換新的時間從這裡起算
+            startedAt = Date()
             observe(first)
             debugLog("接手既有的即時動態")
         }
@@ -99,7 +105,8 @@ final class LiveActivityManager {
                                            backgroundBlocked: backgroundBlocked,
                                            isInBackground: isInBackground,
                                            priority: priority,
-                                           sameAsLast: isSameAsLast(state)))
+                                           sameAsLast: isSameAsLast(state),
+                                           secondsSinceLastSend: secondsSinceLastSend))
         switch decision {
         case .start:
             activity = nil
@@ -109,7 +116,7 @@ final class LiveActivityManager {
             guard let activity else { return }
             send(state, to: activity)
         case .store:
-            // 被擋就不白做工；記住最新內容，回前景或下一次重要更新時送出
+            // 被擋就不白做工；記住最新內容，回前景、下一次重要更新或下一次探測時送出
             lastState = state
             hasUnsentState = true
         case .skip:
@@ -124,11 +131,16 @@ final class LiveActivityManager {
         return state.model.isEquivalent(to: lastState.model, tolerance: 0.5)
     }
 
-    /// 內容沒變也定期重送，避免被標成 stale（由輪詢迴圈呼叫）
+    private var secondsSinceLastSend: TimeInterval {
+        lastUpdateAt.map { Date().timeIntervalSince($0) } ?? .infinity
+    }
+
+    /// 內容沒變也定期重送，避免被標成 stale（由輪詢迴圈呼叫）。
+    /// 背景被擋期間也照送：間隔（45 秒）比探測間隔長，本身就是一次探測，
+    /// 被套用就解除封鎖；不送的話長間奏時會被標成 stale、畫面變成「歌詞沒跟上」。
     func keepAlive() {
-        guard !backgroundBlocked || !isInBackground,
-              isActive, let activity, let lastState, let lastUpdateAt,
-              Date().timeIntervalSince(lastUpdateAt) > keepAliveInterval else { return }
+        guard isActive, let activity, let lastState,
+              secondsSinceLastSend > keepAliveInterval else { return }
         send(lastState, to: activity)
     }
 
@@ -153,7 +165,7 @@ final class LiveActivityManager {
             await activity.end(nil, dismissalPolicy: .immediate)
         }
         let lived = startedAt.map { "，持續 \(Int(Date().timeIntervalSince($0) / 60)) 分鐘" } ?? ""
-        debugLog("即時動態已結束（\(reason.isEmpty ? "未註明" : reason)\(lived)，套用 \(acceptedCount)／被擋 \(rejectedCount)）")
+        debugLog("即時動態已結束（\(reason.isEmpty ? "未註明" : reason)\(lived)，套用 \(acceptedCount)／被擋 \(rejectedCount)／未驗證 \(verifySkipped)）")
     }
 
     // MARK: - 內部
@@ -163,31 +175,36 @@ final class LiveActivityManager {
         hasUnsentState = false
         updateCount += 1
         lastUpdateAt = Date()
+        // 送出當下是不是在背景：驗證要等 2 秒，期間可能剛好鎖了螢幕，
+        // 前景送的更新不能因為驗證時已在背景就算成「背景被擋」
+        let background = isInBackground
         let content = ActivityContent(state: state, staleDate: Date().addingTimeInterval(Self.staleAfter))
         let previous = chain
         chain = Task { [weak self] in
             await previous?.value
             await activity.update(content)
             // 驗證不放進鏈裡：它要等一下才準，放進來會拖慢下一次更新
-            self?.scheduleVerify(state, on: activity)
+            self?.scheduleVerify(state, on: activity, background: background)
         }
     }
 
     /// ActivityKit 是非同步套用的：`activity.content` 不會在 `update()` 回來的當下就變新，
     /// 立刻比對會把正常的更新誤判成「被系統擋住」，進而關掉逐句更新（歌詞就不動了）。
-    /// 所以延遲一下再比，不一致時再給一次機會；期間若已送出更新的內容，這次就不算。
-    private func scheduleVerify(_ state: State, on activity: Activity<LyricsActivityAttributes>) {
+    /// 所以延遲一下再比，不一致時再給一次機會；期間若已送出（或記住）更新的內容，
+    /// 這次就不算，只記一筆「未驗證」。
+    private func scheduleVerify(_ state: State, on activity: Activity<LyricsActivityAttributes>, background: Bool) {
         verifyTask?.cancel()
         verifyTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 800_000_000)
-            guard !Task.isCancelled, let self, self.lastState == state else { return }
+            guard !Task.isCancelled, let self, self.lastState == state else { self?.verifySkipped += 1; return }
             if self.applied(state, on: activity) {
-                self.record(mismatch: nil)
+                self.record(mismatch: nil, background: background)
                 return
             }
             try? await Task.sleep(nanoseconds: 1_200_000_000)
-            guard !Task.isCancelled, self.lastState == state else { return }
-            self.record(mismatch: activity.content.state.model.mismatchField(comparedTo: state.model))
+            guard !Task.isCancelled, self.lastState == state else { self.verifySkipped += 1; return }
+            self.record(mismatch: activity.content.state.model.mismatchField(comparedTo: state.model),
+                        background: background)
         }
     }
 
@@ -196,8 +213,8 @@ final class LiveActivityManager {
     }
 
     /// 比對結果 → 統計與「背景是否被擋」的判斷（只記錄次數，不記錄歌詞）
-    private func record(mismatch: String?) {
-        let background = isInBackground
+    /// - Parameter background: 送出當下是否在背景（不是驗證當下）
+    private func record(mismatch: String?, background: Bool) {
         if mismatch == nil {
             acceptedCount += 1
             backgroundRejectStreak = 0
@@ -217,7 +234,7 @@ final class LiveActivityManager {
                 backgroundRejectStreak += 1
                 if policy.shouldEnterBlocked(backgroundRejectStreak: backgroundRejectStreak), !backgroundBlocked {
                     backgroundBlocked = true
-                    debugLog("即時動態背景更新被系統擋住，改為只在換歌 / 暫停時嘗試")
+                    debugLog("即時動態背景更新被系統擋住，改為只在換歌 / 暫停時嘗試（每 \(Int(policy.blockedProbeInterval)) 秒探測一次）")
                 }
             }
             if !loggedRejectionStreak {

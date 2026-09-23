@@ -91,6 +91,8 @@ common = {
     "SDKROOT": "iphoneos",
     "SWIFT_VERSION": "5.0",
     "TARGETED_DEVICE_FAMILY": "1",
+    # 本機預設值；CI 建置時由 xcodebuild 命令列覆寫成 0.1.<run_number> / <run_number>
+    # （AltStore 來源 altstore/apps.json 的 version / buildVersion 要跟 IPA 一致）
     "MARKETING_VERSION": "0.1.0",
     "CURRENT_PROJECT_VERSION": "1",
     "GENERATE_INFOPLIST_FILE": "YES",

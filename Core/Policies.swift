@@ -107,7 +107,7 @@ struct IdlePolicy: Equatable, Sendable {
     var carMultiplier: Double = 3
     /// 沒在播放這麼久之後結束即時動態（不要一直佔用動態島）
     var activityEndAfterNothing: TimeInterval = 30
-    /// 暫停這麼久之後結束即時動態（暫停常常只是等紅燈，給久一點）
+    /// 暫停這麼久之後結束即時動態（暫停常常只是等紅燈，給久一點）；連著車用音訊時不適用
     var activityEndAfterPaused: TimeInterval = 300
 
     func limit(for kind: Kind, carConnected: Bool = false) -> TimeInterval {
@@ -121,11 +121,13 @@ struct IdlePolicy: Equatable, Sendable {
     }
 
     /// 閒置多久之後結束即時動態；廣告 / Podcast 還在播就不結束。
-    /// 連著車用音訊時「沒在播放」也用暫停的門檻：人還在車上，常常只是切換來源。
+    /// 收起即時動態只是為了不佔用動態島，那是「不在車上」才有的問題：
+    /// 連著車用音訊時暫停（得來速、等人、講電話）一律不收，因為 App 在背景收掉之後就開不回來，
+    /// 接下來整趟車鎖定畫面 / CarPlay 都不會有歌詞；「沒在播放」則放寬到暫停的停止門檻（30 分鐘）。
     func activityEndDelay(for kind: Kind, carConnected: Bool = false) -> TimeInterval? {
         switch kind {
-        case .nothing: return carConnected ? activityEndAfterPaused : activityEndAfterNothing
-        case .paused: return activityEndAfterPaused
+        case .nothing: return carConnected ? pausedLimit : activityEndAfterNothing
+        case .paused: return carConnected ? nil : activityEndAfterPaused
         case .nonMusic: return nil
         }
     }
@@ -216,8 +218,11 @@ struct WidgetReloadPolicy: Equatable, Sendable {
         lastImportantAt = now
     }
 
-    /// 換句時呼叫；回傳 true 代表可以請系統重新整理
-    mutating func allowLineReload(now: Date, isForeground: Bool, renderCount: Int) -> Bool {
+    /// 換句時呼叫；回傳 true 代表可以請系統重新整理。
+    /// - Parameter neverRendered: 小工具從來沒有被系統畫過（renderCount == 0 且沒有 lastRenderAt）：
+    ///   多半是根本沒加到任何畫面上，這時候不做節流判定，否則會誤判成「被系統節流」而改用段落模式。
+    mutating func allowLineReload(now: Date, isForeground: Bool, renderCount: Int,
+                                  neverRendered: Bool = false) -> Bool {
         if let d = disabledUntil, now >= d { disabledUntil = nil }
         guard now.timeIntervalSince(lastRequestAt) >= minInterval,
               now.timeIntervalSince(lastImportantAt) >= quietAfterImportant else { return false }
@@ -229,17 +234,21 @@ struct WidgetReloadPolicy: Equatable, Sendable {
         recent = recent.filter { now.timeIntervalSince($0) < 3600 }
         guard recent.count < hourlyCap else { return false }
 
-        // 回饋控制：每 windowSize 次檢查一次系統實際執行了幾次
-        if windowStartRenders == nil { windowStartRenders = renderCount }
-        windowCount += 1
-        if windowCount > windowSize, let start = windowStartRenders {
-            let rendered = renderCount - start
-            lastWindowResult = (rendered, windowSize)
-            windowCount = 1
-            windowStartRenders = renderCount
-            if rendered < minRenderedPerWindow {
-                disabledUntil = now.addingTimeInterval(disableDuration)
-                return false
+        // 回饋控制：每 windowSize 次檢查一次系統實際執行了幾次（小工具還沒加入時量不到，先不算）
+        if neverRendered {
+            resetWindow()
+        } else {
+            if windowStartRenders == nil { windowStartRenders = renderCount }
+            windowCount += 1
+            if windowCount > windowSize, let start = windowStartRenders {
+                let rendered = renderCount - start
+                lastWindowResult = (rendered, windowSize)
+                windowCount = 1
+                windowStartRenders = renderCount
+                if rendered < minRenderedPerWindow {
+                    disabledUntil = now.addingTimeInterval(disableDuration)
+                    return false
+                }
             }
         }
         recent.append(now)

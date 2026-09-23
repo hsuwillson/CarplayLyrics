@@ -15,7 +15,9 @@ struct PlayerPollResponse: Sendable {
 }
 
 /// Spotify Web API（不在主執行緒解碼 JSON）
-final class SpotifyAPI: PlayerClient, @unchecked Sendable {
+/// 儲存屬性只有 `@MainActor` 的 `SpotifyAuth` 與 `URLSession`，兩者都是 Sendable，
+/// 所以不需要 `@unchecked`（PlayerClient 已要求 Sendable，編譯器會自行檢查）。
+final class SpotifyAPI: PlayerClient {
     private let auth: SpotifyAuth
     private let session: URLSession = .shared
 

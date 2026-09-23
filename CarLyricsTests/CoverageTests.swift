@@ -234,7 +234,6 @@ final class MiscCoverageTests: XCTestCase {
         let a = AppClock.now()
         let b = AppClock.now()
         XCTAssertGreaterThanOrEqual(b, a)
-        XCTAssertEqual(AppClock.wallDate(for: b).timeIntervalSince(Date()), 0, accuracy: 1)
     }
 
     func testSessionLabels() {

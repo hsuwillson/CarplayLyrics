@@ -46,6 +46,8 @@ jobs:
             exit "$status"
           fi
 
+      # 只回報、不擋建置：覆蓋率掉下去會在 Actions 頁面看到警告與摘要，
+      # 但 IPA 照樣產出（要裝到手機上的東西不能被覆蓋率卡住）。
       - name: Coverage (Core)
         if: success()
         continue-on-error: true
@@ -55,19 +57,20 @@ jobs:
           import json, re, subprocess, os
           d = json.load(open("cov.json"))
           summary = open(os.environ["GITHUB_STEP_SUMMARY"], "a")
-          summary.write("## 單元測試覆蓋率（Core）\n\n| 檔案 | 覆蓋率 |\n|---|---|\n")
+          summary.write("## 單元測試覆蓋率（Core）\n\n| 檔案 | 覆蓋率 | 未執行的行 |\n|---|---|---|\n")
           total_cov = total_exe = 0
+          rows = []
           for t in d["targets"]:
               for f in t["files"]:
                   if "/Core/" not in f["path"]:
                       continue
                   total_cov += f["coveredLines"]; total_exe += f["executableLines"]
                   pct = f["lineCoverage"] * 100
-                  summary.write(f"| {f['name']} | {pct:.1f}% |\n")
+                  miss = []
                   if f["coveredLines"] < f["executableLines"]:
                       out = subprocess.run(["xcrun", "xccov", "view", "--archive", "--file", f["path"], "TestResults.xcresult"],
                                            capture_output=True, text=True).stdout
-                      miss, cur = [], None
+                      cur = None
                       for l in out.splitlines():
                           m = re.match(r"^\s*(\d+):\s*(\S+)", l)
                           if m:
@@ -79,9 +82,17 @@ jobs:
                           if cur and re.search(r"\b0\)", l) and cur not in miss:
                               miss.append(cur + "(部分)")
                       print(f"::warning::覆蓋率 {f['name']} {pct:.1f}%，未執行的行：{','.join(miss[:60])}")
+                  # 沒蓋滿的檔案排在最前面，摘要一眼就看到
+                  rows.append((f["coveredLines"] < f["executableLines"], f["name"], pct, ",".join(miss[:30])))
+          for _, name, pct, missing in sorted(rows, key=lambda r: (not r[0], r[1])):
+              summary.write(f"| {name} | {pct:.1f}% | {missing or '—'} |\n")
           pct = 100 * total_cov / max(total_exe, 1)
           summary.write(f"\n**Core 合計：{pct:.2f}%（{total_cov}/{total_exe} 行）**\n")
-          print(f"::notice::Core 覆蓋率 {pct:.2f}%（{total_cov}/{total_exe} 行）")
+          if total_cov < total_exe:
+              summary.write(f"\n⚠️ Core 未達 100%（少 {total_exe - total_cov} 行）。這一步不會擋建置，請補測試。\n")
+              print(f"::warning::Core 覆蓋率 {pct:.2f}%（{total_cov}/{total_exe} 行），未達 100%（少 {total_exe - total_cov} 行）")
+          else:
+              print(f"::notice::Core 覆蓋率 {pct:.2f}%（{total_cov}/{total_exe} 行）")
           PY
 
       - name: SwiftLint (warnings only)
@@ -91,7 +102,10 @@ jobs:
           which swiftlint || brew install swiftlint
           swiftlint lint --quiet --reporter github-actions-logging || true
 
-      # 測試失敗也照樣編譯 App，一次看到所有編譯錯誤
+      # 測試失敗也照樣編譯 App，一次看到所有編譯錯誤。
+      # 版號：CFBundleShortVersionString = 0.1.<run_number>、CFBundleVersion = <run_number>。
+      # 兩個都要跟著建置號變：AltStore 2 比對 buildVersion，但舊版 AltStore / SideStore 只比對 version，
+      # version 一直是 0.1.0 的話就永遠不會提示更新。
       - name: Build (no signing)
         if: ${{ !cancelled() }}
         run: |
@@ -103,6 +117,7 @@ jobs:
             -destination 'generic/platform=iOS' \
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            MARKETING_VERSION=0.1.${{ github.run_number }} \
             CURRENT_PROJECT_VERSION=${{ github.run_number }} \
             > xcodebuild.log 2>&1 && status=0 || status=$?
           grep -E "BUILD (SUCCEEDED|FAILED)" xcodebuild.log || true
@@ -120,7 +135,7 @@ jobs:
           APP=build/Build/Products/Release-iphoneos/CarLyrics.app
           plutil -replace CLGitSHA -string "${{ github.sha }}" "$APP/Info.plist"
           plutil -replace CLBuildDate -string "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$APP/Info.plist"
-          plutil -p "$APP/Info.plist" | grep -E "CFBundleVersion|CLGitSHA|CLBuildDate"
+          plutil -p "$APP/Info.plist" | grep -E "CFBundleShortVersionString|CFBundleVersion|CLGitSHA|CLBuildDate"
 
       # 用 ad-hoc 簽章把 entitlements（App Group）寫進執行檔，
       # Sideloadly 重簽時才會幫你註冊 App Group。
@@ -147,7 +162,9 @@ jobs:
           APP=verify/Payload/CarLyrics.app
           test -f "$APP/Info.plist"
           test -f "$APP/PlugIns/CarLyricsWidget.appex/Info.plist"
-          plutil -p "$APP/Info.plist" | grep -E "CFBundleIdentifier|CFBundleExecutable|MinimumOSVersion"
+          plutil -p "$APP/Info.plist" | grep -E "CFBundleIdentifier|CFBundleExecutable|CFBundleShortVersionString|CFBundleVersion|MinimumOSVersion"
+          # App 與 Widget 的版號要一致（都由 xcodebuild 命令列的 MARKETING_VERSION / CURRENT_PROJECT_VERSION 決定）
+          plutil -p "$APP/PlugIns/CarLyricsWidget.appex/Info.plist" | grep -E "CFBundleShortVersionString|CFBundleVersion"
           lipo -info "$APP/CarLyrics"
           lipo -info "$APP/PlugIns/CarLyricsWidget.appex/CarLyricsWidget"
           ls -la "$APP"
@@ -199,6 +216,9 @@ jobs:
           data = json.load(open(path))
           size = os.path.getsize("CarLyrics.ipa")
           version = data["apps"][0]["versions"][0]
+          # 跟 IPA 裡的 CFBundleShortVersionString / CFBundleVersion 一致（見 Build 步驟）；
+          # 0.1.<run_number> 用數值比對（AltStore 用 .numeric）會遞增，0.1.100 > 0.1.99。
+          version["version"] = "0.1.${{ github.run_number }}"
           version["buildVersion"] = "${{ github.run_number }}"
           version["date"] = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
           version["size"] = size

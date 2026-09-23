@@ -17,6 +17,11 @@ struct LyricsActivityAttributes: ActivityAttributes {
         var artworkFile: String?
         /// 間奏時下一句開始的時刻（畫面自己倒數，不需要更新）
         var nextLineAt: Date?
+        /// 再下一句（鎖定畫面的第二句預告；舊版內容沒有這個欄位 → nil）
+        var nextLine2: String?
+        /// 目前句的起訖真實時刻（逐句進度條由系統自己推進；舊版內容沒有 → nil）
+        var lineStartAt: Date?
+        var lineEndAt: Date?
 
         init(_ m: ActivityContentModel) {
             currentLine = m.currentLine
@@ -28,12 +33,16 @@ struct LyricsActivityAttributes: ActivityAttributes {
             songEnd = m.songEnd
             artworkFile = m.artworkFile
             nextLineAt = m.nextLineAt
+            nextLine2 = m.nextLine2
+            lineStartAt = m.lineStartAt
+            lineEndAt = m.lineEndAt
         }
 
         var model: ActivityContentModel {
             ActivityContentModel(currentLine: currentLine, nextLine: nextLine, trackName: trackName,
                                  artistName: artistName, isPlaying: isPlaying, songStart: songStart,
-                                 songEnd: songEnd, artworkFile: artworkFile, nextLineAt: nextLineAt)
+                                 songEnd: songEnd, artworkFile: artworkFile, nextLineAt: nextLineAt,
+                                 nextLine2: nextLine2, lineStartAt: lineStartAt, lineEndAt: lineEndAt)
         }
 
         /// 間奏倒數的區間（沒有或已經過了就是 nil）
@@ -47,6 +56,9 @@ struct LyricsActivityAttributes: ActivityAttributes {
             guard isPlaying, let songStart, let songEnd, songEnd > songStart else { return nil }
             return songStart...songEnd
         }
+
+        /// 目前句的進度區間（系統自己推進；暫停或沒有時刻時 nil）
+        var lineProgressInterval: ClosedRange<Date>? { model.lineProgressInterval }
     }
 
     /// 每次啟動 Live Activity 的識別碼

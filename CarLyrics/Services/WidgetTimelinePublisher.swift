@@ -24,8 +24,11 @@ final class WidgetTimelinePublisher {
     var mode: LyricsTimelineMode { policy.mode(now: Date()) }
     var renderCount: Int { sink.renderCount }
     var lastRenderAt: Date? { sink.lastRenderAt }
+    /// 小工具從來沒有被系統畫過：多半是根本沒加到任何畫面上（這時候不做節流判定）
+    var neverRendered: Bool { renderCount == 0 && lastRenderAt == nil }
 
     var modeDescription: String {
+        if neverRendered { return "小工具尚未加入（沒有任何小工具在顯示）" }
         switch mode {
         case .perLine: return "逐句更新"
         case .paragraph:
@@ -84,7 +87,8 @@ final class WidgetTimelinePublisher {
     func lineChanged(isForeground: Bool) {
         guard lineReloadsEnabled, lastSnapshot?.isPlaying == true else { return }
         let now = Date()
-        let allowed = policy.allowLineReload(now: now, isForeground: isForeground, renderCount: renderCount)
+        let allowed = policy.allowLineReload(now: now, isForeground: isForeground, renderCount: renderCount,
+                                             neverRendered: neverRendered)
         let mode = policy.mode(now: now)
         if mode != loggedMode {
             loggedMode = mode
