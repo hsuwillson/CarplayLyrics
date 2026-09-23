@@ -29,7 +29,7 @@ enum PlaybackChange: Equatable, Sendable {
 }
 
 /// 以 Spotify 的進度 + 本地時鐘推算目前位置，並偵測換歌、暫停、拖動進度
-struct LyricsSyncEngine: Sendable {
+struct LyricsSyncEngine: Equatable, Sendable {
     /// 推算值與實際進度差超過這個秒數，視為拖動進度
     var seekThreshold: TimeInterval = 2
     /// 連續幾次「進度沒前進」內都當成過期資料忽略；超過就相信 Spotify（可能真的卡住緩衝）
