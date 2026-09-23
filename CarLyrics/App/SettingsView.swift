@@ -125,6 +125,14 @@ private struct DrivingSection: View {
             Toggle(isOn: $model.autoFocusInCar) {
                 Label("連上 CarPlay 時自動進入專注模式", systemImage: "car.side")
             }
+            Toggle(isOn: $model.keepAwakeWhileDriving) {
+                Label("開車時保持螢幕開著（CarPlay 歌詞才會即時更新）", systemImage: "iphone.and.arrow.forward")
+            }
+            if model.keepAwakeWhileDriving {
+                Toggle(isOn: $model.dimScreenWhileDriving) {
+                    Label("開車時把手機螢幕調暗", systemImage: "sun.min")
+                }
+            }
             Toggle(isOn: $model.keepScreenOn) {
                 Label("播放時螢幕不自動關閉", systemImage: "sun.max")
             }
@@ -159,16 +167,16 @@ private struct DrivingSection: View {
         } header: {
             Text("進階")
         } footer: {
-            Text("「鎖定手機後繼續同步」關掉的話，鎖定畫面與 CarPlay 的歌詞會在鎖定後停住。收起：Spotify 停止 30 秒、暫停 5 分鐘後自動結束；連著 CarPlay 時暫停不收（得來速、等人都沒事），沒在播放 30 分鐘才收；講電話不算閒置。")
+            Text("「鎖定手機後繼續同步」讓 App 在背景繼續追蹤 Spotify（小工具與回到前景時的歌詞才會是對的）；但 iOS 仍會擋掉背景送出的鎖定畫面／CarPlay 更新。收起：Spotify 停止 30 秒、暫停 5 分鐘後自動結束；連著 CarPlay 時暫停不收（得來速、等人都沒事），沒在播放 30 分鐘才收；講電話不算閒置。")
         }
     }
 
     private func footer(for mode: LiveActivityMode) -> String {
         switch mode {
         case .whileDriving:
-            return "連上 CarPlay 才顯示，平常動態島保持乾淨，下車自動收起。iOS 只允許 App 打開時開始顯示，所以上車後要打開一次 CarLyrics——到「設定檢查」設定捷徑自動化。上車後鎖定畫面沒有歌詞時，打開 CarLyrics 一下、或按上面的「現在顯示鎖定畫面歌詞」。"
+            return "連上 CarPlay 才顯示，平常動態島保持乾淨，下車自動收起。iOS 只允許 App 打開時開始顯示，所以上車後要打開一次 CarLyrics——到「設定檢查」設定捷徑自動化。\n重要：CarLyrics 不在螢幕上（鎖定或切到別的 App）時，iOS 會擋掉它送出的更新，CarPlay 歌詞就會停在最後一句；所以開車時請讓 CarLyrics 留在手機螢幕上（專注模式幾乎全黑，不費電），「保持螢幕開著」會幫你不讓手機自動鎖定。鎖定後只剩 CarPlay 小工具頁的歌詞會照時間軸動。"
         case .always:
-            return "播歌時在鎖定畫面顯示歌詞。iOS 會同時在動態島放一個小圖示（系統規定，無法關閉）；沒在播放一陣子後會自動收起。"
+            return "播歌時在鎖定畫面顯示歌詞。iOS 會同時在動態島放一個小圖示（系統規定，無法關閉）；沒在播放一陣子後會自動收起。CarLyrics 不在螢幕上時 iOS 會擋掉更新，歌詞會停住——開車時請讓它留在螢幕上。"
         case .off:
             return "不在鎖定畫面與 CarPlay 顯示歌詞。可以改用小工具（CarPlay 小工具頁、鎖定畫面）。"
         }

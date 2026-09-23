@@ -35,6 +35,8 @@ final class Preferences {
         static let prefetchQueueOnWiFi = "prefetchQueueOnWiFi"
         static let lastHeartbeat = "lastHeartbeat"
         static let lastHeartbeatInBackground = "lastHeartbeatInBackground"
+        static let keepAwakeWhileDriving = "keepAwakeWhileDriving"
+        static let dimScreenWhileDriving = "dimScreenWhileDriving"
     }
 
     let defaults: UserDefaults
@@ -109,6 +111,19 @@ final class Preferences {
     var prefetchQueueOnWiFi: Bool {
         get { bool(Key.prefetchQueueOnWiFi, default: true) }
         set { defaults.set(newValue, forKey: Key.prefetchQueueOnWiFi) }
+    }
+
+    /// 開車時（接著 CarPlay、App 在前景）螢幕不自動關閉：iOS 會擋掉背景的即時動態更新，
+    /// CarLyrics 留在螢幕上 CarPlay 歌詞才會即時更新；預設開
+    var keepAwakeWhileDriving: Bool {
+        get { bool(Key.keepAwakeWhileDriving, default: true) }
+        set { defaults.set(newValue, forKey: Key.keepAwakeWhileDriving) }
+    }
+
+    /// 開車模式生效時把螢幕調暗（恢復時回到原本亮度）；預設關
+    var dimScreenWhileDriving: Bool {
+        get { bool(Key.dimScreenWhileDriving, default: false) }
+        set { defaults.set(newValue, forKey: Key.dimScreenWhileDriving) }
     }
 
     /// 控制中心 / 捷徑要求開啟的畫面（App 還沒啟動時先寫在這裡）

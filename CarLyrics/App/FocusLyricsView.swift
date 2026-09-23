@@ -33,6 +33,14 @@ struct FocusLyricsView: View {
                         FocusControls(compact: landscape)
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
+                    if let hint = model.drivingHint {
+                        // 開車模式：讓使用者知道為什麼要把手機留在這個畫面
+                        Label(hint, systemImage: model.isDrivingModeActive ? "car.fill" : "exclamationmark.triangle")
+                            .font(.caption)
+                            .foregroundStyle(model.isDrivingModeActive ? Color.white.opacity(0.45) : Color.orange)
+                            .multilineTextAlignment(.leading)
+                            .padding(.top, 8)
+                    }
                 }
                 .padding(.horizontal, 24)
                 .padding(.top, 12)

@@ -50,6 +50,11 @@ struct SetupChecklistView: View {
                 Toggle(isOn: $model.backgroundEnabled) {
                     CheckLabel(title: "鎖定手機後繼續同步", detail: "關掉的話鎖定後歌詞會停住", ok: model.backgroundEnabled)
                 }
+                Toggle(isOn: $model.keepAwakeWhileDriving) {
+                    CheckLabel(title: "開車時保持螢幕開著",
+                               detail: "CarLyrics 不在螢幕上時 iOS 會擋掉更新，CarPlay 歌詞會停住",
+                               ok: model.keepAwakeWhileDriving)
+                }
                 if let days = model.signingDaysRemaining {
                     CheckRow(title: "App 簽名", detail: days < 0 ? "已過期，請用 AltStore 重新整理" : "還有 \(days) 天到期",
                              ok: days > 2) { EmptyView() }
@@ -62,7 +67,7 @@ struct SetupChecklistView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Label("上車自動打開 CarLyrics", systemImage: "wand.and.stars")
                         .font(.headline)
-                    Text("iOS 只允許 App 打開時開始顯示鎖定畫面與 CarPlay 歌詞。設一次捷徑自動化，之後每次上車都會自動打開。")
+                    Text("iOS 只允許 App 打開時開始顯示鎖定畫面與 CarPlay 歌詞，而且 App 不在螢幕上時會擋掉它的更新。設一次捷徑自動化，之後每次上車都會自動打開；然後把手機放在車架上、讓 CarLyrics 留在螢幕上（專注模式幾乎全黑），CarPlay 歌詞就會逐句即時更新。")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                     VStack(alignment: .leading, spacing: 4) {
@@ -73,7 +78,7 @@ struct SetupChecklistView: View {
                     }
                     // iOS 在手機鎖定時不一定會真的把 App 叫到前景（實測前先不要說死）：給一個保險做法
                     Label {
-                        Text("手機鎖著時自動化不一定會打開 App。上車後鎖定畫面沒有歌詞：點一下自動化的通知、或打開 CarLyrics 一次；還是沒有就到「設定」按「現在顯示鎖定畫面歌詞」。")
+                        Text("手機鎖著時自動化不一定會打開 App。上車後鎖定畫面沒有歌詞：點一下自動化的通知、或打開 CarLyrics 一次；還是沒有就到「設定」按「現在顯示鎖定畫面歌詞」。鎖定手機後 CarPlay 儀表板的歌詞會停在最後一句（iOS 限制）；這時 CarPlay 小工具頁的歌詞仍會照時間軸繼續。")
                     } icon: {
                         Image(systemName: "info.circle")
                     }
@@ -93,8 +98,9 @@ struct SetupChecklistView: View {
             }
 
             Section {
-                GuideRow(symbol: "car.fill", title: "把小工具加到 CarPlay",
-                         steps: ["iPhone「設定」→「一般」→「CarPlay」", "選你的車 →「小工具」", "打開「顯示小工具」，加入 CarLyrics"])
+                GuideRow(symbol: "car.fill", title: "把小工具加到 CarPlay（手機鎖定時的備援）",
+                         steps: ["iPhone「設定」→「一般」→「CarPlay」", "選你的車 →「小工具」", "打開「顯示小工具」，加入 CarLyrics",
+                                 "小工具不靠 App 在前景，鎖定手機後仍會每十幾秒換一段"])
                 GuideRow(symbol: "rectangle.stack", title: "在 CarPlay 打開即時動態",
                          steps: ["同一頁（CarPlay → 你的車）", "打開「即時動態」"])
             } header: {

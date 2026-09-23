@@ -18,6 +18,9 @@ final class AppModel {
     @ObservationIgnored let liveActivity = LiveActivityManager()
     @ObservationIgnored let widget = WidgetTimelinePublisher()
     @ObservationIgnored let power = PowerMonitor()
+    @ObservationIgnored private let screen = ScreenDimmer()
+    /// 開車模式（留在前景讓 CarPlay 歌詞即時更新）的決策
+    @ObservationIgnored private let drivingPolicy = DrivingModePolicy()
     @ObservationIgnored private let reachability = Reachability()
     @ObservationIgnored private let artwork = ArtworkStore()
     @ObservationIgnored private let poller = PlaybackPoller()
@@ -48,6 +51,8 @@ final class AppModel {
     private(set) var lyricsChosenCount = 0
     /// 接著車用音訊（CarPlay / 車用藍牙）
     private(set) var isCarConnected = false
+    /// 開車模式生效中：在前景、接著 CarPlay、設定有開 → 螢幕不自動關閉（必要時調暗）
+    private(set) var isDrivingModeActive = false
 
     // MARK: 診斷（診斷頁每秒刷新，不需要觸發畫面更新）
 
@@ -112,6 +117,8 @@ final class AppModel {
             } else {
                 endLiveActivity(reason: "設定關閉")
             }
+            // 沒有即時動態就不需要留在前景
+            updateIdleTimer()
         }
     }
 
@@ -119,6 +126,23 @@ final class AppModel {
     var keepScreenOn: Bool {
         didSet {
             preferences.keepScreenOn = keepScreenOn
+            updateIdleTimer()
+        }
+    }
+
+    /// 開車時保持螢幕開著：iOS 會擋掉 App 在背景送出的即時動態更新（實測 build 36），
+    /// CarLyrics 留在螢幕上 CarPlay 歌詞才會即時更新
+    var keepAwakeWhileDriving: Bool {
+        didSet {
+            preferences.keepAwakeWhileDriving = keepAwakeWhileDriving
+            updateIdleTimer()
+        }
+    }
+
+    /// 開車模式生效時把螢幕調暗（結束時恢復）
+    var dimScreenWhileDriving: Bool {
+        didSet {
+            preferences.dimScreenWhileDriving = dimScreenWhileDriving
             updateIdleTimer()
         }
     }
@@ -220,6 +244,8 @@ final class AppModel {
         backgroundEnabled = preferences.backgroundEnabled
         liveActivityEnabled = preferences.liveActivityEnabled
         keepScreenOn = preferences.keepScreenOn
+        keepAwakeWhileDriving = preferences.keepAwakeWhileDriving
+        dimScreenWhileDriving = preferences.dimScreenWhileDriving
         focusFontScale = preferences.focusFontScale
         focusLandscapeLock = preferences.focusLandscapeLock
         autoFocusInCar = preferences.autoFocusInCar
@@ -242,6 +268,8 @@ final class AppModel {
         audioKeeper.onCarConnectionChanged = { [weak self] connected in
             guard let self else { return }
             self.isCarConnected = connected
+            // 上車 / 下車：開車模式（螢幕不自動關閉、調暗）跟著開關
+            self.updateIdleTimer()
             // 上車：如果正在播歌，直接進專注模式（車架上看得比較清楚）
             if !connected { self.autoFocusedThisCarSession = false }
             if connected, self.autoFocusInCar, self.isPlaying, self.requestedScreen == nil,
@@ -382,6 +410,9 @@ final class AppModel {
         if backgroundEnabled && auth.isLoggedIn {
             audioKeeper.ensureRunning()
             debugLog("進入背景，持續執行")
+            if isCarConnected, liveActivity.isActive {
+                debugLog("在車上進入背景：iOS 會擋掉背景的即時動態更新，CarPlay 歌詞會停在最後一句（staleDate 到了畫面自己推進一次）；小工具照時間軸繼續")
+            }
         } else {
             // 使用者關閉背景執行：直接結束即時動態，避免之後顯示「暫停更新」像是故障
             if liveActivity.isActive { endLiveActivity(reason: "背景同步已關閉") }
@@ -977,13 +1008,41 @@ final class AppModel {
         liveActivity.keepAliveInterval = constrained ? 60 : 45
     }
 
-    // MARK: - 螢幕
+    // MARK: - 螢幕 / 開車模式
 
+    private var drivingInput: DrivingModePolicy.Input {
+        DrivingModePolicy.Input(isForeground: isForeground, carConnected: isCarConnected,
+                                keepAwakeWhileDriving: keepAwakeWhileDriving, dimWhileDriving: dimScreenWhileDriving,
+                                liveActivityEnabled: liveActivityEnabled && auth.isLoggedIn,
+                                focusModeActive: focusModeActive, keepScreenOn: keepScreenOn, isPlaying: isPlaying)
+    }
+
+    /// 為什麼要留在螢幕上（主畫面 / 專注模式的一行提示）；不用提醒時 nil
+    var drivingHint: String? {
+        drivingPolicy.hint(drivingInput)
+    }
+
+    /// 螢幕不自動關閉 / 調暗：前景、專注模式、播放時常亮、開車模式都在這裡決定
+    /// （進出前景、上下車、播放暫停、改設定時都會呼叫）
     private func updateIdleTimer() {
-        let disable = isForeground && (focusModeActive || (keepScreenOn && isPlaying))
+        let input = drivingInput
+        let driving = drivingPolicy.isDriving(input)
+        switch drivingPolicy.change(from: isDrivingModeActive, to: driving) {
+        case .entered:
+            isDrivingModeActive = true
+            debugLog("開車模式：開始（留在前景，CarPlay 歌詞即時更新；螢幕不自動關閉\(dimScreenWhileDriving ? "、調暗" : "")）")
+        case .exited:
+            isDrivingModeActive = false
+            debugLog("開車模式：結束（\(!isForeground ? "進入背景" : !isCarConnected ? "離開 CarPlay" : "設定改變")）")
+        case .none:
+            break
+        }
+        let disable = drivingPolicy.shouldDisableIdleTimer(input)
         if UIApplication.shared.isIdleTimerDisabled != disable {
             UIApplication.shared.isIdleTimerDisabled = disable
+            debugLog(disable ? "螢幕不自動關閉：開" : "螢幕不自動關閉：關")
         }
+        screen.apply(brightness: drivingPolicy.targetBrightness(input))
     }
 
     // MARK: - 心跳（偵測背景執行是否被中斷）
@@ -1029,9 +1088,12 @@ final class AppModel {
                       ("簽名剩", signingDaysRemaining.map { "\($0) 天" })])
         r.add("設定", [("鎖定畫面歌詞", liveActivityMode.label), ("背景同步", R.yesNo(backgroundEnabled)),
                       ("閒置收起", R.yesNo(endActivityWhenIdle)), ("上車專注", R.yesNo(autoFocusInCar)),
-                      ("螢幕常亮", R.yesNo(keepScreenOn)), ("Wi-Fi 預載佇列", R.yesNo(prefetchQueueOnWiFi)),
+                      ("螢幕常亮", R.yesNo(keepScreenOn)), ("開車保持螢幕", R.yesNo(keepAwakeWhileDriving)),
+                      ("開車調暗", R.yesNo(dimScreenWhileDriving)), ("Wi-Fi 預載佇列", R.yesNo(prefetchQueueOnWiFi)),
                       ("歌詞提前", String(format: "全部 %+.2f / 這首 %+.2f", globalOffset, trackOffset))])
-        r.add("播放", [("前景", R.yesNo(isForeground)), ("登入", R.yesNo(auth.isLoggedIn)),
+        r.add("播放", [("前景", R.yesNo(isForeground)), ("開車模式", isDrivingModeActive ? "生效" : nil),
+                      ("螢幕", UIApplication.shared.isIdleTimerDisabled ? "不自動關閉" : "會自動關閉"),
+                      ("調暗中", screen.isDimmed ? "是" : nil), ("登入", R.yesNo(auth.isLoggedIn)),
                       ("狀態", session.label), ("歌詞", lyrics.state.label),
                       ("手動歌詞", lyrics.hasManualLyrics ? "是" : nil),
                       ("歌曲", nowPlaying.map { "\($0.title) – \($0.artist)" }),
@@ -1052,6 +1114,8 @@ final class AppModel {
                           ("套用/被擋", "\(liveActivity.acceptedCount)/\(liveActivity.rejectedCount)"),
                           ("未驗證", "\(liveActivity.verifySkipped)"),
                           ("背景被擋", liveActivity.backgroundBlocked ? "是" : nil),
+                          ("staleDate", liveActivity.lastStaleInterval.map { "\(Int($0)) 秒後" }),
+                          ("stale 次數", "\(liveActivity.staleCount)（推進 \(liveActivity.staleAdvanceCount)）"),
                           ("手動顯示", liveActivityCarOverride ? "是" : nil),
                           ("最近不同欄位", liveActivity.lastMismatchField),
                           ("最近被擋", R.ago(liveActivity.lastRejectedAt, now: now)),

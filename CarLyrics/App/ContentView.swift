@@ -101,6 +101,7 @@ private struct MainScreen: View {
                 NoticeBanner(notice: notice) { model.perform($0) }
             }
             LiveActivityHint()
+            DrivingModeHint()
             NowPlayingHero()
             LyricsStage(openPicker: { picker = PickerRequest(openImporter: $0) })
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -249,6 +250,29 @@ private struct LiveActivityHint: View {
             return "鎖定畫面歌詞：連上 CarPlay 後顯示"
         }
         return "鎖定畫面歌詞：尚未開始"
+    }
+}
+
+/// 開車模式：接著 CarPlay 時提醒「留在螢幕上」——iOS 會擋掉背景送出的即時動態更新，
+/// CarLyrics 不在螢幕上時 CarPlay 歌詞就會停住（只剩小工具頁會照時間軸動）
+private struct DrivingModeHint: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        if model.auth.isLoggedIn, let hint = model.drivingHint {
+            HStack(spacing: Theme.Spacing.s) {
+                Image(systemName: model.isDrivingModeActive ? "car.fill" : "exclamationmark.triangle")
+                    .foregroundStyle(model.isDrivingModeActive ? Color.green : Color.orange)
+                    .accessibilityHidden(true)
+                Text(hint)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+                    .minimumScaleFactor(0.85)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .combine)
+        }
     }
 }
 

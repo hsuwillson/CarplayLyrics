@@ -6,7 +6,8 @@ import UIKit
 ///
 /// - iOS 只允許 App 在前景時「開始」即時動態；背景失敗後就不再重試，等回到前景
 /// - 更新依序送出（串成一條鏈），避免較舊的內容最後才到
-/// - 每次更新帶 staleDate；App 被系統終止後，畫面會顯示「暫停更新」
+/// - 每次更新帶 staleDate = 下一句開始 + 寬限（見 LiveActivityStalePolicy）：背景更新被擋時，
+///   畫面到時會自己把下一句升成目前句一次並標示「歌詞未更新」；播完後改顯示「打開 CarLyrics」
 /// - iOS 會擋掉只播背景音訊的 App 在背景的更新：連續被擋 8 次後，背景只在換歌 / 暫停時嘗試，
 ///   但每隔 15 秒仍放一次換句更新出去探測；一被套用就恢復逐句更新（系統只是慢、不是拒絕時能自癒）
 /// - 接近 8 小時上限且 App 在前景時，自動重新開始一個
@@ -36,16 +37,21 @@ final class LiveActivityManager {
     /// 送出後還沒來得及驗證就被更新的內容蓋掉的次數（診斷用）。
     /// 歌詞密集時大多數更新都驗不到，套用／被擋的數字才看得懂。
     private(set) var verifySkipped = 0
-    /// 背景被擋期間累積、還沒送出的內容
-    private var hasUnsentState = false
+    /// 背景被擋期間累積、還沒送出的最新內容（`lastState` 永遠是「真的送出去過」的內容，
+    /// 探測送出後的驗證才不會被 store 蓋掉而永遠驗不到）
+    private var pendingState: State?
     /// 背景更新被系統擋掉（回前景時清除）
     private(set) var backgroundBlocked = false
     private var backgroundRejectStreak = 0
     private var loggedRejectionStreak = false
     private let policy = LiveActivityUpdatePolicy()
-
-    /// 超過這個秒數沒更新，系統會把即時動態標成 stale
-    private static let staleAfter: TimeInterval = 120
+    let stalePolicy = LiveActivityStalePolicy()
+    /// 最近一次送出時選的 staleDate 距離當時幾秒（診斷用）
+    private(set) var lastStaleInterval: TimeInterval?
+    /// 系統把即時動態標成 stale 的次數；其中「下一句已開始 → 畫面自己推進」的次數
+    private(set) var staleCount = 0
+    private(set) var staleAdvanceCount = 0
+    private var lastStaleLogAt: Date?
     /// 內容沒變時，每隔這麼久重送一次（延長 staleDate）
     var keepAliveInterval: TimeInterval = 45
     /// iOS 8 小時上限前 30 分鐘，在前景時自動換新
@@ -63,7 +69,8 @@ final class LiveActivityManager {
         guard let activity else { return startBlockedUntilForeground ? "未啟動（等回到前景）" : "未啟動" }
         switch activity.activityState {
         case .active: return backgroundBlocked ? "進行中（背景更新被系統暫停）" : "進行中"
-        case .stale: return "暫停更新"
+        case .stale:
+            return backgroundBlocked ? "畫面停在上次套用的內容（背景更新被系統擋住）" : "暫停更新（等下一次更新）"
         case .ended: return "已結束"
         case .dismissed: return "已關閉"
         @unknown default: return "未知"
@@ -117,8 +124,7 @@ final class LiveActivityManager {
             send(state, to: activity)
         case .store:
             // 被擋就不白做工；記住最新內容，回前景、下一次重要更新或下一次探測時送出
-            lastState = state
-            hasUnsentState = true
+            pendingState = state
         case .skip:
             break
         }
@@ -136,18 +142,18 @@ final class LiveActivityManager {
     }
 
     /// 內容沒變也定期重送，避免被標成 stale（由輪詢迴圈呼叫）。
-    /// 背景被擋期間也照送：間隔（45 秒）比探測間隔長，本身就是一次探測，
+    /// 背景被擋期間也照送（送的是累積的最新內容）：間隔（45 秒）比探測間隔長，本身就是一次探測，
     /// 被套用就解除封鎖；不送的話長間奏時會被標成 stale、畫面變成「歌詞沒跟上」。
     func keepAlive() {
-        guard isActive, let activity, let lastState,
+        guard isActive, let activity, let state = pendingState ?? lastState,
               secondsSinceLastSend > keepAliveInterval else { return }
-        send(lastState, to: activity)
+        send(state, to: activity)
     }
 
     /// 回到前景時把最新內容送出（只在背景被擋期間累積過內容時）
     func flush() {
-        guard hasUnsentState, isActive, let activity, let lastState else { return }
-        send(lastState, to: activity)
+        guard let pendingState, isActive, let activity else { return }
+        send(pendingState, to: activity)
     }
 
     /// - Parameter reason: 寫進紀錄，事後看得出為什麼消失（閒置、下車、設定、登出…）
@@ -159,6 +165,7 @@ final class LiveActivityManager {
         guard let activity else { return }
         self.activity = nil
         lastState = nil
+        pendingState = nil
         let previous = chain
         chain = Task {
             await previous?.value
@@ -172,13 +179,14 @@ final class LiveActivityManager {
 
     private func send(_ state: State, to activity: Activity<LyricsActivityAttributes>) {
         lastState = state
-        hasUnsentState = false
+        pendingState = nil
         updateCount += 1
-        lastUpdateAt = Date()
+        let now = Date()
+        lastUpdateAt = now
         // 送出當下是不是在背景：驗證要等 2 秒，期間可能剛好鎖了螢幕，
         // 前景送的更新不能因為驗證時已在背景就算成「背景被擋」
         let background = isInBackground
-        let content = ActivityContent(state: state, staleDate: Date().addingTimeInterval(Self.staleAfter))
+        let content = ActivityContent(state: state, staleDate: staleDate(for: state, now: now))
         let previous = chain
         chain = Task { [weak self] in
             await previous?.value
@@ -206,6 +214,13 @@ final class LiveActivityManager {
             self.record(mismatch: activity.content.state.model.mismatchField(comparedTo: state.model),
                         background: background)
         }
+    }
+
+    /// 這次內容的 staleDate（下一句開始 + 寬限；沒有下一句時 120 秒）
+    private func staleDate(for state: State, now: Date) -> Date {
+        let date = stalePolicy.staleDate(for: state.model, now: now)
+        lastStaleInterval = date.timeIntervalSince(now)
+        return date
     }
 
     private func applied(_ state: State, on activity: Activity<LyricsActivityAttributes>) -> Bool {
@@ -253,23 +268,46 @@ final class LiveActivityManager {
             return
         }
         do {
+            let now = Date()
             let new = try Activity.request(
                 attributes: LyricsActivityAttributes(sessionID: UUID().uuidString),
-                content: ActivityContent(state: state, staleDate: Date().addingTimeInterval(Self.staleAfter)),
+                content: ActivityContent(state: state, staleDate: staleDate(for: state, now: now)),
                 pushType: nil
             )
             activity = new
             lastState = state
-            startedAt = Date()
-            lastUpdateAt = Date()
+            pendingState = nil
+            startedAt = now
+            lastUpdateAt = now
             lastError = nil
             observe(new)
-            debugLog("即時動態已開始")
+            debugLog("即時動態已開始（staleDate \(Int(lastStaleInterval ?? 0)) 秒後）")
         } catch {
             startBlockedUntilForeground = true
             lastError = error.localizedDescription
             debugLog("即時動態無法開始（回到前景會再試）：\(error.localizedDescription)")
         }
+    }
+
+    /// 超過 staleDate 沒更新（背景被擋時每句都會發生一次；前景時只有系統套用慢於寬限才會）。
+    /// 畫面那邊會依 `LiveActivityStalePolicy.display` 自己推進一次；這裡只記次數，
+    /// 紀錄檔最多每 60 秒一行，免得被擋期間每 3 秒洗一行
+    private func recordStale() {
+        staleCount += 1
+        let now = Date()
+        let display = lastState.map { stalePolicy.display(for: $0.model, now: now) }
+        if display?.kind == .advanced { staleAdvanceCount += 1 }
+        if let last = lastStaleLogAt, now.timeIntervalSince(last) < 60 { return }
+        lastStaleLogAt = now
+        let kind: String
+        switch display?.kind {
+        case .advanced?: kind = "畫面自己推進到下一句"
+        case .songOver?: kind = "歌曲已播完，改顯示打開 CarLyrics"
+        case .expired?: kind = "推進時間窗已過，改顯示提示"
+        case .unchanged?, nil: kind = "維持原內容"
+        }
+        let since = lastUpdateAt.map { "上次送出 \(Int(now.timeIntervalSince($0))) 秒前" } ?? "沒有送出紀錄"
+        debugLog("即時動態 stale（\(kind)；\(since)；\(isInBackground ? "背景" : "前景")；累計 \(staleCount) 次）")
     }
 
     /// 使用者滑掉、或 8 小時上限到期 → 清掉參考，回前景時會重新開始
@@ -278,15 +316,13 @@ final class LiveActivityManager {
         stateObserver = Task { [weak self] in
             for await state in a.activityStateUpdates {
                 guard let self else { return }
-                if state == .stale {
-                    // 超過 staleDate 沒更新：鎖定畫面會顯示「歌詞沒跟上」
-                    debugLog("即時動態變成 stale（\(self.lastUpdateAt.map { "上次更新 \(Int(Date().timeIntervalSince($0))) 秒前" } ?? "沒有更新紀錄")）")
-                }
+                if state == .stale { self.recordStale() }
                 if state == .dismissed || state == .ended {
                     debugLog("即時動態被關閉（\(state)）")
                     if self.activity?.id == a.id {
                         self.activity = nil
                         self.lastState = nil
+                        self.pendingState = nil
                         // 背景時無法重新開始，等回到前景；前景則可以立刻換新
                         self.startBlockedUntilForeground = self.isInBackground
                     }

@@ -3,6 +3,8 @@ import SwiftUI
 import WidgetKit
 
 /// 歌詞即時動態（只顯示歌詞：播放控制交給鎖定畫面上的 Spotify）
+/// - stale（App 在背景時 iOS 擋掉更新、或 App 被終止）：依 `LiveActivityStalePolicy` 自己推進到下一句一次，
+///   播完後改顯示「打開 CarLyrics」，不把舊歌詞當成正在唱的
 /// - 鎖定畫面：一行小字歌名 + 目前句（大字、最多三行）+ 細的逐句進度條（系統自己推進，
 ///   在動就代表即時動態還活著）+ 下一句 + 再下一句
 /// - CarPlay / Apple Watch：`.small` activity family（iOS 26 CarPlay 使用這個尺寸），目前句 + 下一句 + 細進度條
@@ -117,18 +119,53 @@ private struct TimerBar: View {
 }
 
 /// 背景更新被系統暫停時的說明
-private let staleMessage = "歌詞沒跟上 · 點這裡打開 CarLyrics"
+private let staleMessage = "歌詞未更新 · 打開 CarLyrics"
 
-/// 目前句（間奏時改成系統自己推進的倒數）
+/// 畫面實際要顯示的句子：正常時就是送出的內容；stale 時依 `LiveActivityStalePolicy` 決定
+/// （下一句已開始 → 升成目前句；播完 → 「打開 CarLyrics」）。`now` 是這次重畫的時刻。
+private struct ShownLyrics {
+    let current: String
+    let next: String
+    let next2: String?
+    let isStale: Bool
+    let staleKind: LiveActivityStalePolicy.Display.Kind?
+
+    init(state: LyricsActivityAttributes.ContentState, isStale: Bool, now: Date = Date()) {
+        self.isStale = isStale
+        if isStale {
+            let d = LiveActivityStalePolicy().display(for: state.model, now: now)
+            current = d.current
+            next = d.next
+            next2 = nil
+            staleKind = d.kind
+        } else {
+            current = state.currentLine
+            next = state.nextLine
+            next2 = state.nextLine2
+            staleKind = nil
+        }
+    }
+
+    /// stale 提示：播完時已經把「打開 CarLyrics」放在目前句，就不重複
+    var staleHint: String? {
+        guard isStale else { return nil }
+        switch staleKind {
+        case .songOver?: return "歌曲已播完"
+        case .expired?, .advanced?, .unchanged?, nil: return staleMessage
+        }
+    }
+}
+
+/// 目前句（間奏時改成系統自己推進的倒數；stale 時顯示推進後的句子，不倒數）
 private struct CurrentLineView: View {
     let state: LyricsActivityAttributes.ContentState
+    let shown: ShownLyrics
     let font: Font
-    let isStale: Bool
     var lineLimit: Int = 2
 
     var body: some View {
         Group {
-            if let countdown = state.countdownInterval(from: Date()) {
+            if !shown.isStale, let countdown = state.countdownInterval(from: Date()) {
                 HStack(spacing: 4) {
                     Text("♪ 下一句")
                     Text(timerInterval: countdown, countsDown: true)
@@ -136,13 +173,13 @@ private struct CurrentLineView: View {
                 }
                 .lineLimit(1)
             } else {
-                Text(state.currentLine)
+                Text(shown.current)
                     .lineLimit(lineLimit)
                     .minimumScaleFactor(0.7)
             }
         }
         .font(font)
-        .foregroundStyle(isStale ? Color.secondary : Color.primary)
+        .foregroundStyle(shown.isStale ? Color.secondary : Color.primary)
     }
 }
 
@@ -152,16 +189,17 @@ private struct ExpandedLyrics: View {
     let isStale: Bool
 
     var body: some View {
+        let shown = ShownLyrics(state: state, isStale: isStale)
         VStack(spacing: 4) {
-            CurrentLineView(state: state, font: .system(.title3, design: .rounded, weight: .bold), isStale: isStale)
+            CurrentLineView(state: state, shown: shown, font: .system(.title3, design: .rounded, weight: .bold))
                 .multilineTextAlignment(.center)
-            if isStale {
-                Text(staleMessage)
+            if let hint = shown.staleHint {
+                Text(hint)
                     .font(.caption)
                     .foregroundStyle(.orange)
                     .lineLimit(1)
-            } else if !state.nextLine.isEmpty {
-                Text(state.nextLine)
+            } else if !shown.next.isEmpty {
+                Text(shown.next)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -195,23 +233,25 @@ private struct SmallActivityView: View {
     let isStale: Bool
 
     var body: some View {
+        let shown = ShownLyrics(state: state, isStale: isStale)
         VStack(alignment: .leading, spacing: 3) {
             ActivityProgress(state: state)
                 .frame(height: 4)
-            CurrentLineView(state: state, font: .system(size: 22, weight: .bold, design: .rounded), isStale: isStale)
+            CurrentLineView(state: state, shown: shown, font: .system(size: 22, weight: .bold, design: .rounded))
             Spacer(minLength: 0)
-            if isStale {
-                Label("歌詞未更新", systemImage: "exclamationmark.triangle.fill")
+            if let hint = shown.staleHint {
+                // 只放一行橘色提示（高度和平常一樣），讓駕駛一眼看出這不是即時的
+                Label(hint, systemImage: "exclamationmark.triangle.fill")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.orange)
                     .lineLimit(1)
-            } else if !state.nextLine.isEmpty {
+            } else if !shown.next.isEmpty {
                 HStack(spacing: 5) {
                     if !state.isPlaying {
                         Image(systemName: "pause.fill")
                             .font(.system(size: 11))
                     }
-                    Text(state.nextLine)
+                    Text(shown.next)
                         .font(.system(size: 14))
                         .lineLimit(1)
                 }
@@ -229,30 +269,32 @@ private struct LockScreenActivityView: View {
     let isStale: Bool
 
     var body: some View {
+        let shown = ShownLyrics(state: state, isStale: isStale)
         VStack(alignment: .leading, spacing: 6) {
             header
-            CurrentLineView(state: state, font: .system(.title, design: .rounded, weight: .heavy),
-                            isStale: isStale, lineLimit: 3)
+            CurrentLineView(state: state, shown: shown, font: .system(.title, design: .rounded, weight: .heavy),
+                            lineLimit: 3)
             if !isStale {
                 // 細的逐句進度條：更新沒跟上時它會停在滿格，比文字更容易一眼看出
                 LineProgress(state: state)
                     .frame(height: 3)
             }
-            if isStale {
-                Text(staleMessage)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.orange)
-            } else if !state.nextLine.isEmpty {
-                Text(state.nextLine)
+            if !shown.next.isEmpty {
+                Text(shown.next)
                     .font(.headline)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                if let next2 = state.nextLine2, !next2.isEmpty {
+                if let next2 = shown.next2, !next2.isEmpty {
                     Text(next2)
                         .font(.subheadline)
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)
                 }
+            }
+            if let hint = shown.staleHint {
+                Text(hint)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.orange)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
