@@ -883,6 +883,7 @@ final class AppModel {
             nowPlaying = playback.nowPlaying
         }
         if case .rateLimited(let retryAfter, let quotaExceeded) = result {
+            poller.deferRequests(for: retryAfter)
             pollError = quotaExceeded ? .quotaExceeded : .rateLimited(seconds: Int(retryAfter))
         }
     }

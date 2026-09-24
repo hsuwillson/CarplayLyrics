@@ -10,6 +10,7 @@ extension UTType {
 struct LyricsPickerView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
+    @State private var targetTrackID: String?
     @State private var query = ""
     @State private var results: [LRCLIBTrack] = []
     @State private var isLoading = false
@@ -46,6 +47,7 @@ struct LyricsPickerView: View {
                 }
             }
             .task {
+                targetTrackID = model.nowPlaying?.trackID
                 if openImporter { showImporter = true }
                 if let np = model.nowPlaying { query = "\(np.title) \(np.primaryArtist)" }
                 isLoading = true
@@ -68,6 +70,7 @@ struct LyricsPickerView: View {
             }
             if model.lyrics.hasManualLyrics {
                 Button(role: .destructive) {
+                    guard selectionIsCurrent else { return }
                     model.lyrics.resetManual()
                     dismiss()
                 } label: {
@@ -95,6 +98,7 @@ struct LyricsPickerView: View {
             }
             ForEach(results, id: \.id) { track in
                 Button {
+                    guard selectionIsCurrent else { return }
                     model.useCandidate(track)
                     dismiss()
                 } label: {
@@ -106,7 +110,17 @@ struct LyricsPickerView: View {
         }
     }
 
+    private var selectionIsCurrent: Bool {
+        guard LyricsSelectionPolicy.canApply(target: targetTrackID, current: model.lyrics.query?.trackID),
+              model.nowPlaying?.trackID == targetTrackID else {
+            errorMessage = "歌曲已切換，請關閉此頁並為目前歌曲重新選擇歌詞。"
+            return false
+        }
+        return true
+    }
+
     private func search() {
+        guard selectionIsCurrent else { return }
         let text = query.trimmingCharacters(in: .whitespaces)
         guard !text.isEmpty else { return }
         Task {
@@ -127,6 +141,7 @@ struct LyricsPickerView: View {
                 errorMessage = "無法讀取檔案（需要 UTF-8 文字檔）"
                 return
             }
+            guard selectionIsCurrent else { return }
             model.importLyrics(text)
             dismiss()
         case .failure(let error):

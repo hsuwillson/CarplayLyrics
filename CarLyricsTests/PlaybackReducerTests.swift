@@ -129,7 +129,8 @@ final class PlaybackReducerTests: XCTestCase {
         send(.nonMusic(.ad, isPlaying: true), context(2))
         // 廣告後 Spotify 先回傳過期進度
         let out = send(play(Fixture.nowPlaying(progress: 10), at: 4), context(4))
-        XCTAssertEqual(out.effects.last, .pushCurrent(important: true))
+        XCTAssertTrue(out.effects.contains(.pushCurrent(important: true)))
+        XCTAssertTrue(out.effects.contains(.publishTimeline(debounce: false)))
         XCTAssertTrue(state.preferFullPlayerEndpoint)
     }
 
@@ -159,7 +160,7 @@ final class PlaybackReducerTests: XCTestCase {
         // 廣告結束，同一首歌繼續（change == .none）
         let out = send(play(Fixture.nowPlaying(progress: 16), at: 6), context(6))
         XCTAssertEqual(state.session, .playing)
-        XCTAssertEqual(out.effects, [.refreshTimelineFile, .pushCurrent(important: true)])
+        XCTAssertEqual(out.effects, [.refreshTimelineFile, .pushCurrent(important: true), .publishTimeline(debounce: false)])
     }
 
     // MARK: 沒有在播放

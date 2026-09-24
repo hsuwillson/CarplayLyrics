@@ -6,6 +6,11 @@ import Foundation
 final class PlaybackPoller {
     private var task: Task<Void, Never>?
     private var generation = 0
+    private var cooldown = RequestCooldown()
+
+    func deferRequests(for seconds: TimeInterval) {
+        cooldown.impose(seconds: seconds, now: AppClock.now())
+    }
     private var body: (@MainActor () async -> TimeInterval)?
 
     var isRunning: Bool { task != nil }
@@ -35,6 +40,11 @@ final class PlaybackPoller {
         task = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self, current == self.generation, let body = self.body else { return }
+                let remaining = self.cooldown.remaining(at: AppClock.now())
+                if remaining > 0 {
+                    try? await Task.sleep(for: .seconds(remaining))
+                    continue
+                }
                 let delay = await body()
                 guard current == self.generation else { return }
                 try? await Task.sleep(for: .seconds(delay), tolerance: .milliseconds(300))

@@ -22,7 +22,7 @@ final class SpotifyAuth: NSObject {
     @ObservationIgnored private var session: ASWebAuthenticationSession?
     @ObservationIgnored private var refreshTask: Task<SpotifyTokens, Error>?
     /// 登入 / 登出的世代；進行中的 refresh 回來時若世代已變就丟掉
-    @ObservationIgnored private var sessionGeneration = 0
+    @ObservationIgnored private var sessionGeneration = SessionGeneration()
     private static let keychainAccount = "spotify.tokens"
     /// 重開機後尚未解鎖，Keychain 暫時讀不到 → 稍後重讀，不要當成「未登入」
     @ObservationIgnored private var keychainLocked = false
@@ -110,6 +110,9 @@ final class SpotifyAuth: NSObject {
         guard let refresh = response.refresh_token else {
             throw SpotifyAuthError.missingRefreshToken
         }
+        sessionGeneration.advance()
+        refreshTask?.cancel()
+        refreshTask = nil
         store(SpotifyTokens(accessToken: response.access_token,
                             refreshToken: refresh,
                             expiresAt: Date().addingTimeInterval(TimeInterval(response.expires_in)),
@@ -122,7 +125,7 @@ final class SpotifyAuth: NSObject {
     }
 
     func logout() {
-        sessionGeneration += 1
+        sessionGeneration.advance()
         refreshTask?.cancel()
         refreshTask = nil
         keychainLocked = false
@@ -147,7 +150,12 @@ final class SpotifyAuth: NSObject {
 
     @discardableResult
     func refresh() async throws -> SpotifyTokens {
-        if let running = refreshTask { return try await running.value }
+        if let running = refreshTask {
+            let generation = sessionGeneration
+            let result = try await running.value
+            guard generation == sessionGeneration else { throw SpotifyAuthError.notLoggedIn }
+            return result
+        }
         guard let current = tokens else { throw SpotifyAuthError.notLoggedIn }
 
         let task = Task { () throws -> SpotifyTokens in
@@ -163,7 +171,7 @@ final class SpotifyAuth: NSObject {
         }
         refreshTask = task
         let generation = sessionGeneration
-        defer { refreshTask = nil }
+        defer { if generation == sessionGeneration { refreshTask = nil } }
 
         do {
             let new = try await task.value
@@ -175,6 +183,7 @@ final class SpotifyAuth: NSObject {
             debugLog("Token 已更新")
             return new
         } catch {
+            guard generation == sessionGeneration else { throw SpotifyAuthError.notLoggedIn }
             // 只有 refresh token 確定失效（invalid_grant / 401）才登出；其他錯誤保留 token 稍後再試
             if case SpotifyAuthError.tokenRequestFailed(let code, let body) = error,
                code == 401 || (code == 400 && body.contains("invalid_grant")) {

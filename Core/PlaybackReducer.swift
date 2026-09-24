@@ -241,6 +241,7 @@ struct PlaybackReducer: Sendable {
         if leavingNonMusic, change == .none || change == .stale {
             // 廣告結束後回到同一首歌：立刻把正確內容推回去
             output.effects.append(.pushCurrent(important: true))
+            output.effects.append(.publishTimeline(debounce: false))
         }
 
         if np.isPlaying {
