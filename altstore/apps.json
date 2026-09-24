@@ -15,19 +15,19 @@
       "localizedDescription": "開車時把 Spotify 正在播放的歌詞同步顯示在鎖定畫面、動態島與 CarPlay。個人使用，不上架。",
       "iconURL": "https://raw.githubusercontent.com/hsuwillson/CarplayLyrics/main/altstore/icon.png",
       "tintColor": "5846D2",
-      "version": "0.1.49",
-      "versionDate": "2026-09-23T16:42:31Z",
-      "versionDescription": "CI #49（commit f95a84fe0b5ee070716291da67622524388bfb60）",
+      "version": "0.1.50",
+      "versionDate": "2026-09-24T02:04:01Z",
+      "versionDescription": "CI #50（commit 8db74a675eecd7ca50193c6bd7c7ab3b30d765f7）",
       "downloadURL": "https://github.com/hsuwillson/CarplayLyrics/releases/download/latest-build/CarLyrics.ipa",
-      "size": 1432784,
+      "size": 1444347,
       "versions": [
         {
-          "version": "0.1.49",
-          "buildVersion": "49",
-          "date": "2026-09-23T16:42:31Z",
-          "localizedDescription": "CI #49（commit f95a84fe0b5ee070716291da67622524388bfb60）",
+          "version": "0.1.50",
+          "buildVersion": "50",
+          "date": "2026-09-24T02:04:01Z",
+          "localizedDescription": "CI #50（commit 8db74a675eecd7ca50193c6bd7c7ab3b30d765f7）",
           "downloadURL": "https://github.com/hsuwillson/CarplayLyrics/releases/download/latest-build/CarLyrics.ipa",
-          "size": 1432784,
+          "size": 1444347,
           "minOSVersion": "26.0"
         }
       ],
