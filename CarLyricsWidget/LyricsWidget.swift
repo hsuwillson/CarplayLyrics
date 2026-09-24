@@ -11,6 +11,8 @@ struct LyricsEntry: TimelineEntry {
     let mode: LyricsTimelineMode
     let playbackInterval: ClosedRange<Date>?
     let artworkFile: String?
+    /// 卡拉 OK 視窗：這一格開始時正在唱的句子 + 接下來一分多鐘的句子，每句帶起訖時刻（沒在播放時是空的）
+    var rows: [KaraokeRow] = []
 
     static func sample(date: Date = .now) -> LyricsEntry {
         LyricsEntry(date: date,
@@ -18,7 +20,12 @@ struct LyricsEntry: TimelineEntry {
                                                upcoming: ["示範歌詞第二句", "示範歌詞第三句", "示範歌詞第四句"]),
                     title: "示範歌曲", isPlaying: true, mode: .paragraph,
                     playbackInterval: date.addingTimeInterval(-60)...date.addingTimeInterval(120),
-                    artworkFile: nil)
+                    artworkFile: nil,
+                    rows: ["示範歌詞第一句", "示範歌詞第二句", "示範歌詞第三句", "示範歌詞第四句"]
+                        .enumerated().map { i, text in
+                            KaraokeRow(text: text, start: date.addingTimeInterval(Double(i) * 5 - 2),
+                                       end: date.addingTimeInterval(Double(i) * 5 + 3))
+                        })
     }
 }
 
@@ -52,7 +59,7 @@ struct LyricsProvider: TimelineProvider {
         return snapshot.frames(from: now).map {
             LyricsEntry(date: $0.date, frame: $0, title: snapshot.title, isPlaying: snapshot.isPlaying,
                         mode: snapshot.mode, playbackInterval: snapshot.playbackInterval,
-                        artworkFile: snapshot.artworkFile)
+                        artworkFile: snapshot.artworkFile, rows: snapshot.karaokeRows(at: $0.date))
         }
     }
 }
@@ -89,7 +96,18 @@ struct LyricsWidgetView: View {
         default:
             // CarPlay 小工具頁 / 主畫面（systemSmall）
             Group {
-                if entry.mode == .paragraph {
+                if !entry.rows.isEmpty {
+                    // 卡拉 OK 視窗：CarPlay 小工具頁實測約一分鐘才重畫一次，每句一條系統推進的進度條，
+                    // 重畫之間看哪一條在動就知道唱到哪一句。放得下幾句就列幾句，不要截掉
+                    ViewThatFits(in: .vertical) {
+                        karaokeLayout(rows: 6)
+                        karaokeLayout(rows: 5)
+                        karaokeLayout(rows: 4)
+                        karaokeLayout(rows: 3)
+                        karaokeLayout(rows: 2)
+                        karaokeLayout(rows: 1)
+                    }
+                } else if entry.mode == .paragraph {
                     // 段落模式：一格涵蓋一個時間窗，接下來最多 4 句；放不下就少列幾句，不要截掉
                     ViewThatFits(in: .vertical) {
                         paragraphLayout(upcomingCap: LyricsTimelineSnapshot.paragraphMaxUpcoming)
@@ -102,6 +120,18 @@ struct LyricsWidgetView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+    }
+
+    /// 卡拉 OK 視窗：每句同樣字級（重畫當下的第一句不一定還是正在唱的那句），底下各一條進度條：
+    /// 空的＝還沒到、在走＝正在唱、滿的＝唱過了
+    private func karaokeLayout(rows count: Int) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            header
+            ForEach(Array(entry.rows.prefix(count).enumerated()), id: \.offset) { _, row in
+                KaraokeRowView(row: row)
+            }
+            Spacer(minLength: 0)
         }
     }
 
@@ -192,6 +222,30 @@ struct LyricsWidgetView: View {
             .tint(WidgetTheme.Color.playing)
             .accessibilityHidden(true)
         }
+    }
+}
+
+/// 卡拉 OK 視窗的一句：歌詞一行 + 系統自己推進的細進度條
+private struct KaraokeRowView: View {
+    let row: KaraokeRow
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(row.text)
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            ProgressView(timerInterval: row.interval, countsDown: false) {
+                EmptyView()
+            } currentValueLabel: {
+                EmptyView()
+            }
+            .progressViewStyle(.linear)
+            .tint(WidgetTheme.Color.lineBar)
+            .accessibilityHidden(true)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(row.text)
     }
 }
 
