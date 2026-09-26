@@ -78,10 +78,14 @@ final class TimelineRoundFourTests: XCTestCase {
         XCTAssertNotEqual(playing().frames(from: t0, limit: 1).last?.current, "♪ 等待下一首")
     }
 
-    func testTailFrameSkippedWhenSongAlreadyOver() {
-        // 已經播到結尾之後：最後一格的時間不會倒退
-        let f = playing(duration: 1).frames(from: t0.addingTimeInterval(30))
-        XCTAssertNotEqual(f.last?.current, "♪ 等待下一首")
+    func testFinishedSongReloadShowsWaitingAtCurrentTime() {
+        // 結束後才重新載入：清除過期歌詞，且時間不得倒退到歌曲結尾。
+        let now = t0.addingTimeInterval(30)
+        let f = playing(duration: 1).frames(from: now)
+        XCTAssertEqual(f.count, 1)
+        XCTAssertEqual(f.first?.date, now)
+        XCTAssertEqual(f.first?.current, "♪ 等待下一首")
+        XCTAssertNil(f.first?.index)
     }
 
     /// F-4：間奏倒數
