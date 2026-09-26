@@ -24,7 +24,7 @@ extension LyricsTimelineSnapshot {
     /// 空白句（間奏）不列，但它的開始就是前一句的結束。沒在播放、沒有同步歌詞時是空的。
     func karaokeRows(at date: Date, window: TimeInterval = karaokeWindow,
                      maxRows: Int = karaokeMaxRows) -> [KaraokeRow] {
-        guard isPlaying, !lines.isEmpty, maxRows > 0 else { return [] }
+        guard isPlaying, !hasFinished(at: date), !lines.isEmpty, maxRows > 0 else { return [] }
         let windowEnd = date.addingTimeInterval(window)
         var rows: [KaraokeRow] = []
         var i = lines.index(at: date.timeIntervalSince(songStart)) ?? 0

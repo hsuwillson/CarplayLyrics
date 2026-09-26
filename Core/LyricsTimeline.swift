@@ -73,6 +73,10 @@ struct LyricsTimelineSnapshot: Codable, Equatable, Sendable {
     /// - Parameter paragraphWindow: 段落模式一格涵蓋幾秒（系統換格更慢時可以放大）
     func frames(from now: Date, limit: Int = 150,
                 paragraphWindow: TimeInterval = LyricsTimelineSnapshot.paragraphWindow) -> [LyricsTimelineFrame] {
+        if hasFinished(at: now) {
+            return [LyricsTimelineFrame(date: now, index: nil, current: "♪ 等待下一首",
+                                        upcoming: ["沒跟上就打開 CarLyrics"])]
+        }
         guard isPlaying, !lines.isEmpty else {
             // 小工具標題列已經有歌名：第二行放歌手，不要把歌名再重複一次（暫停、搜尋中、閒置都一樣）
             return [LyricsTimelineFrame(date: now, index: nil,
@@ -134,6 +138,12 @@ struct LyricsTimelineSnapshot: Codable, Equatable, Sendable {
             date = songStart.addingTimeInterval(lines[next].time)
         }
         return result
+    }
+
+    /// 與時間軸收尾共用判斷：延遲設定只影響歌詞，不延長實際播放時間。
+    func hasFinished(at date: Date) -> Bool {
+        guard isPlaying, let end = endOfSong else { return false }
+        return date >= end
     }
 
     /// 歌曲結束後 3 秒（長度未知時 nil）

@@ -33,6 +33,10 @@ enum UserFacingError: Error, Equatable, Sendable {
             }
             return
         }
+        if let e = error as? SpotifyRateLimitError {
+            self = e.quotaExceeded ? .quotaExceeded : .rateLimited(seconds: Int(ceil(e.retryAfter)))
+            return
+        }
         if let e = error as? SpotifyAPIError {
             switch e {
             case .forbidden: self = .spotifyForbidden

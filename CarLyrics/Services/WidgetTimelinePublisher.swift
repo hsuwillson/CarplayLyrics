@@ -44,10 +44,16 @@ final class WidgetTimelinePublisher {
     func publish(_ snapshot: LyricsTimelineSnapshot, debounce: Bool = false) {
         var snapshot = snapshot
         snapshot.mode = mode
-        if let last = lastSnapshot, last.isSameTimeline(as: snapshot) { return }
+        if let last = lastSnapshot, last.isSameTimeline(as: snapshot) {
+            pendingTask?.cancel()
+            pendingTask = nil
+            pending = nil
+            return
+        }
         guard debounce else {
             pendingTask?.cancel()
             pendingTask = nil
+            pending = nil
             write(snapshot, reloadSystem: true)
             return
         }

@@ -171,6 +171,14 @@ t_tests = add("target.tests", "PBXNativeTarget", buildConfigurationList=x_list,
               name="CarLyricsTests", productName="CarLyricsTests",
               productReference=p_tests, productType="com.apple.product-type.bundle.unit-test")
 
+# 小工具發布流程的整合測試：使用真正的 publisher，注入記憶體 sink。
+for source in ["CarLyrics/Services/WidgetTimelinePublisher.swift", "CarLyrics/Services/DebugLog.swift",
+               "Shared/LyricsTimelineStore.swift", "Shared/AppGroup.swift"]:
+    ref = add("test.ref." + source, "PBXFileReference", lastKnownFileType="sourcecode.swift",
+              path=source, sourceTree="SOURCE_ROOT")
+    build_file = add("test.build." + source, "PBXBuildFile", fileRef=ref)
+    objs[x_src]["files"].append(build_file)
+
 # Project
 proj_settings_common = {
     "ALWAYS_SEARCH_USER_PATHS": "NO",

@@ -15,11 +15,11 @@ struct PlayerPollResponse: Sendable {
 }
 
 /// Spotify Web API（不在主執行緒解碼 JSON）
-/// 儲存屬性只有 `@MainActor` 的 `SpotifyAuth` 與 `URLSession`，兩者都是 Sendable，
+/// 儲存屬性為 `@MainActor` 的 `SpotifyAuth` 與共用的 transport actor，兩者都是 Sendable，
 /// 所以不需要 `@unchecked`（PlayerClient 已要求 Sendable，編譯器會自行檢查）。
 final class SpotifyAPI: PlayerClient {
     private let auth: SpotifyAuth
-    private let session: URLSession = .shared
+    private let transport = SpotifyHTTPTransport()
 
     init(auth: SpotifyAuth) {
         self.auth = auth
@@ -46,7 +46,7 @@ final class SpotifyAPI: PlayerClient {
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         request.timeoutInterval = 10
 
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await transport.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         let body = String(data: data, encoding: .utf8).map { String($0.prefix(200)) } ?? ""
         switch status {
@@ -70,14 +70,19 @@ final class SpotifyAPI: PlayerClient {
         var request = URLRequest(url: URL(string: "https://api.spotify.com/v1/me/player/queue?market=from_token")!)
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         request.timeoutInterval = 10
-        guard let (data, response) = try? await session.data(for: request),
+        guard let (data, response) = try? await transport.data(for: request),
               (response as? HTTPURLResponse)?.statusCode == 200 else { return [] }
         return SpotifyResponseParser.parseQueue(data)
     }
 
     /// `fullPlayer = true` 時改用 GET /v1/me/player（currently-playing 回傳過期資料時的備援）
     func currentlyPlaying(fullPlayer: Bool) async throws -> PlayerPollResponse {
-        try await currentlyPlaying(fullPlayer: fullPlayer, retryOn401: true)
+        do {
+            return try await currentlyPlaying(fullPlayer: fullPlayer, retryOn401: true)
+        } catch let error as SpotifyRateLimitError {
+            return PlayerPollResponse(result: .rateLimited(retryAfter: error.retryAfter,
+                                                          quotaExceeded: error.quotaExceeded), bytes: 0)
+        }
     }
 
     private func currentlyPlaying(fullPlayer: Bool, retryOn401: Bool) async throws -> PlayerPollResponse {
@@ -91,7 +96,7 @@ final class SpotifyAPI: PlayerClient {
 
         // 同步引擎用單調時鐘
         let sent = AppClock.now()
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await transport.data(for: request)
         let received = AppClock.now()
         guard let http = response as? HTTPURLResponse else { throw SpotifyAPIError.http(0, "") }
 
@@ -108,12 +113,6 @@ final class SpotifyAPI: PlayerClient {
         case 401 where retryOn401:
             try await refresh()
             return try await currentlyPlaying(fullPlayer: fullPlayer, retryOn401: false)
-
-        case 429:
-            let retry = TimeInterval(http.value(forHTTPHeaderField: "Retry-After") ?? "") ?? 5
-            let body = String(data: data, encoding: .utf8) ?? ""
-            return PlayerPollResponse(result: .rateLimited(retryAfter: retry, quotaExceeded: body.contains("QUOTA_EXCEEDED")),
-                                      bytes: data.count)
 
         default:
             let body = String(data: data, encoding: .utf8).map { String($0.prefix(200)) } ?? ""

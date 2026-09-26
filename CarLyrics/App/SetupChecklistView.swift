@@ -71,11 +71,11 @@ struct SetupChecklistView: View {
                     if !model.activitiesEnabled { Button("開啟設定") { model.perform(.openSettings) } }
                 }
                 Toggle(isOn: $model.backgroundEnabled) {
-                    CheckLabel(title: "鎖定手機後繼續同步", detail: "關掉的話鎖定後歌詞會停住", ok: model.backgroundEnabled)
+                    CheckLabel(title: "鎖定手機後繼續同步", detail: "維持播放狀態查詢；不保證車機逐句重畫", ok: model.backgroundEnabled)
                 }
                 Toggle(isOn: $model.keepAwakeWhileDriving) {
                     CheckLabel(title: "開車時保持螢幕開著",
-                               detail: "手機鎖定後 iOS 會擋掉更新，CarPlay 歌詞會停住",
+                               detail: "避免 App 被暫停；系統仍可能延後顯示更新",
                                ok: model.keepAwakeWhileDriving)
                 }
                 if let days = model.signingDaysRemaining {
@@ -83,7 +83,7 @@ struct SetupChecklistView: View {
                              ok: days > 2) { EmptyView() }
                 }
             } header: {
-                Text("必要設定")
+                Text("使用準備")
             }
 
             Section {
@@ -114,7 +114,7 @@ struct SetupChecklistView: View {
                 VStack(alignment: .leading, spacing: Theme.Spacing.m) {
                     Label("上車自動打開 CarLyrics", systemImage: "wand.and.stars")
                         .font(.headline)
-                    Text("iOS 只讓 App 在打開時開始顯示鎖定畫面與 CarPlay 歌詞。設一次捷徑自動化，之後每次上車都會自動打開；把手機放在車架上、讓 CarLyrics 留在螢幕上（專注模式幾乎全黑），CarPlay 歌詞就會逐句更新。")
+                    Text("iOS 只讓 App 在打開時開始顯示鎖定畫面與 CarPlay 歌詞。設一次捷徑自動化，之後每次上車都會自動打開；把手機放在車架上、讓 CarLyrics 留在螢幕上（專注模式幾乎全黑），CarPlay 可減少背景執行中斷；車機顯示速度仍由系統決定。")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                     VStack(alignment: .leading, spacing: Theme.Spacing.s) {
@@ -151,7 +151,7 @@ struct SetupChecklistView: View {
             Section {
                 GuideRow(symbol: "car.fill", title: "把小工具加到 CarPlay（手機鎖定時的備援）",
                          steps: ["iPhone「設定」→「一般」→「CarPlay」", "選你的車 →「小工具」", "打開「顯示小工具」，加入 CarLyrics",
-                                 "小工具不靠 App 在前景，鎖定手機後仍會每十幾秒換一段"])
+                                 "小工具由系統排程更新，實際換句速度可能不同"])
                 GuideRow(symbol: "rectangle.stack", title: "在 CarPlay 打開即時動態",
                          steps: ["同一頁（CarPlay → 你的車）", "打開「即時動態」"])
             } header: {
@@ -161,7 +161,7 @@ struct SetupChecklistView: View {
         .navigationTitle(isOnboarding ? "開始使用" : "設定檢查")
         .navigationBarTitleDisplayMode(.inline)
         // 通知權限在這裡問（看得到原因、而且不在車上；AppModel 會擋掉車上的情況）
-        .onAppear { model.requestCarNoticeAuthorizationIfNeeded() }
+        
         .toolbar {
             if isOnboarding {
                 ToolbarItem(placement: .confirmationAction) {
@@ -193,7 +193,7 @@ private struct ProgressHeader: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.s) {
             HStack {
-                Text(allDone ? "全部完成，可以上路了" : "必要設定")
+                Text(allDone ? "設定已完成" : "完成使用準備")
                     .font(.subheadline.weight(.semibold))
                 Spacer()
                 Text("\(done) / \(total)")
