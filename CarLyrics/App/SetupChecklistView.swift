@@ -160,8 +160,6 @@ struct SetupChecklistView: View {
         }
         .navigationTitle(isOnboarding ? "開始使用" : "設定檢查")
         .navigationBarTitleDisplayMode(.inline)
-        // 通知權限在這裡問（看得到原因、而且不在車上；AppModel 會擋掉車上的情況）
-        
         .toolbar {
             if isOnboarding {
                 ToolbarItem(placement: .confirmationAction) {
