@@ -15,7 +15,7 @@ struct LiveActivityWindowPolicy: Equatable, Sendable {
     /// 至少 / 最多帶幾句（時間窗內不夠時仍帶 `minLines` 句；太密時最多 `maxLines` 句：
     /// CarPlay 卡片放得下的列數有限、內容也有 4 KB 上限）
     var minLines = 2
-    var maxLines = 6
+    var maxLines = 10
     /// 每句最多幾個字（一列只顯示一行；中文一列約 20 字，超過的截斷加「…」，也守住 4 KB）
     var maxCharacters = 40
 

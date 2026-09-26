@@ -100,6 +100,10 @@ struct LyricsWidgetView: View {
                     // 卡拉 OK 視窗：CarPlay 小工具頁實測約一分鐘才重畫一次，每句一條系統推進的進度條，
                     // 重畫之間看哪一條在動就知道唱到哪一句。放得下幾句就列幾句，不要截掉
                     ViewThatFits(in: .vertical) {
+                        karaokeLayout(rows: 10)
+                        karaokeLayout(rows: 9)
+                        karaokeLayout(rows: 8)
+                        karaokeLayout(rows: 7)
                         karaokeLayout(rows: 6)
                         karaokeLayout(rows: 5)
                         karaokeLayout(rows: 4)
@@ -126,8 +130,7 @@ struct LyricsWidgetView: View {
     /// 卡拉 OK 視窗：每句同樣字級（重畫當下的第一句不一定還是正在唱的那句），底下各一條進度條：
     /// 空的＝還沒到、在走＝正在唱、滿的＝唱過了
     private func karaokeLayout(rows count: Int) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            header
+        VStack(alignment: .leading, spacing: 1) {
             ForEach(Array(entry.rows.prefix(count).enumerated()), id: \.offset) { _, row in
                 KaraokeRowView(row: row)
             }
@@ -232,7 +235,7 @@ private struct KaraokeRowView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(row.text)
-                .font(.subheadline.weight(.semibold))
+                .font(.system(size: 14, weight: .medium))
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
             ProgressView(timerInterval: row.interval, countsDown: false) {
@@ -242,6 +245,7 @@ private struct KaraokeRowView: View {
             }
             .progressViewStyle(.linear)
             .tint(WidgetTheme.Color.lineBar)
+            .frame(height: 1)
             .accessibilityHidden(true)
         }
         .accessibilityElement(children: .combine)

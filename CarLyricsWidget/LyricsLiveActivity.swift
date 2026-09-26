@@ -10,7 +10,7 @@ import WidgetKit
 ///   （只會重畫這一次），播完後改顯示「打開 CarLyrics」，不把舊歌詞當成正在唱的
 /// - 鎖定畫面：一行小字歌名 + 目前句（大字、最多三行）+ 細的逐句進度條 + 接下來最多三句（各帶進度條）
 /// - CarPlay / Apple Watch：`.small` activity family（iOS 26 CarPlay 使用這個尺寸）：卡拉 OK 視窗——
-///   目前句 + 接下來最多五句，每句一條進度條（空的＝還沒到、在走＝正在唱、滿的＝唱過了）
+///   目前句 + 接下來最多十句（含目前句），每句一條進度條（空的＝還沒到、在走＝正在唱、滿的＝唱過了）
 /// - 每次 body 被評估都記一筆重畫時刻到 App Group（`LiveActivityRenderStore`，5 秒內合併），診斷頁看得到節奏
 /// - 動態島：只放一個小圖示。即時動態進行中時系統一定會佔用動態島，無法關閉，
 ///   所以這裡刻意不放歌詞、不放按鈕，把佔用面積壓到最小；沒在播放時會自動收起（見 IdlePolicy）
@@ -301,7 +301,7 @@ private struct UpcomingRow: View {
 /// CarPlay 大約每分鐘才重畫一次即時動態（build 45 實測；App 在前景、每句更新都被套用也一樣），
 /// 重畫之間畫面完全不變，所以「哪一句正在唱」不能靠粗體：每一列（目前句也一樣）底下都有一條系統自己推進的
 /// 進度條——空的＝還沒到、在走＝正在唱、滿的＝唱過了。重畫當下的目前句大一點只是方便看，一分鐘後它的進度條
-/// 早就滿格了也沒關係，看哪一條在動就對了。放得下幾列就列幾列（`ViewThatFits`，最多五句），不要被截掉
+/// 早就滿格了也沒關係，看哪一條在動就對了。放得下幾列就列幾列（`ViewThatFits`，最多十句（含目前句）），不要被截掉
 private struct SmallActivityView: View {
     let state: LyricsActivityAttributes.ContentState
     let isStale: Bool
@@ -309,6 +309,10 @@ private struct SmallActivityView: View {
     var body: some View {
         let shown = ShownLyrics(state: state, isStale: isStale)
         ViewThatFits(in: .vertical) {
+            layout(shown, rows: 9)
+            layout(shown, rows: 8)
+            layout(shown, rows: 7)
+            layout(shown, rows: 6)
             layout(shown, rows: 5)
             layout(shown, rows: 4)
             layout(shown, rows: 3)
@@ -343,7 +347,7 @@ private struct SmallActivityView: View {
             }
             // 接下來的句子：每列同樣的字級與顏色（一分鐘後第幾列才是「目前句」不一定），進度條才是真相
             ForEach(Array(shown.rows.prefix(rows).enumerated()), id: \.offset) { _, row in
-                UpcomingRow(row: row, font: WidgetTheme.Font.carRow, color: WidgetTheme.Color.upcoming)
+                UpcomingRow(row: row, font: WidgetTheme.Font.carRow, color: .primary, barHeight: 1)
             }
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)

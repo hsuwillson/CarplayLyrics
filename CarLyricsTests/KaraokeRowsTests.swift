@@ -20,7 +20,14 @@ final class KaraokeRowsTests: XCTestCase {
         XCTAssertEqual(rows.first?.start, t0.addingTimeInterval(25))
         XCTAssertEqual(rows.first?.end, t0.addingTimeInterval(35))
         XCTAssertEqual(rows.first?.interval, t0.addingTimeInterval(25)...t0.addingTimeInterval(35))
-        XCTAssertEqual(rows.count, LyricsTimelineSnapshot.karaokeMaxRows)
+        XCTAssertEqual(rows.count, 8) // 25–95秒；105秒已超出75秒視窗。
+    }
+
+    func testDenseLyricsKeepTenConsecutiveLines() {
+        let lines = (0..<40).map { LyricLine(time: Double($0) * 3, text: "第\($0 + 1)句") }
+        let rows = snapshot(lines).karaokeRows(at: t0)
+        XCTAssertEqual(rows.map(\.text), (1...10).map { "第\($0)句" })
+        XCTAssertEqual(rows.last?.end, t0.addingTimeInterval(30))
     }
 
     /// 還沒到第一句：從第一句開始列

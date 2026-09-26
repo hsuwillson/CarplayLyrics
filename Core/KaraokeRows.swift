@@ -16,7 +16,7 @@ extension LyricsTimelineSnapshot {
     /// 視窗涵蓋從現在起幾秒內會開始的句子（CarPlay 重畫約 60 秒一次，留一點餘裕）
     static let karaokeWindow: TimeInterval = 75
     /// 最多列幾句（實際放得下幾句由畫面的 ViewThatFits 決定）
-    static let karaokeMaxRows = 6
+    static let karaokeMaxRows = 10
     /// 最後一句不知道何時結束（也不知道歌曲長度）時，假設唱幾秒
     static let karaokeLastLine: TimeInterval = 6
 

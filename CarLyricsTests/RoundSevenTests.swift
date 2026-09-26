@@ -78,7 +78,7 @@ final class ActivityUpcomingLineTests: XCTestCase {
         XCTAssertNil(over.upcoming)
     }
 
-    /// 即時動態內容有 4 KB 上限：視窗塞滿 6 句（每句被政策截到 40 字）、其他欄位各 100 字也要在限制內
+    /// 即時動態內容有 4 KB 上限：視窗塞滿 10 句（每句被政策截到 40 字）、其他欄位各 100 字也要在限制內
     func testEncodedSizeWithWindowStaysSmall() throws {
         let long = String(repeating: "測", count: 100)
         let policy = LiveActivityWindowPolicy()
@@ -102,7 +102,7 @@ final class ActivityUpcomingLineTests: XCTestCase {
                                                 i: m.lineEndAt, w: m.upcoming))
         XCTAssertLessThan(data.count, 4096)
         let decoded = try JSONDecoder().decode([ActivityUpcomingLine].self, from: JSONEncoder().encode(window))
-        XCTAssertEqual(decoded.count, 6)
+        XCTAssertEqual(decoded.count, 10)
         XCTAssertEqual(decoded[0].text, rowText)
     }
 }
@@ -112,18 +112,19 @@ final class LiveActivityWindowPolicyTests: XCTestCase {
     private let t0 = Date(timeIntervalSince1970: 20_000)
 
     func testDefaults() {
-        // 第十輪：CarPlay 約每分鐘才重畫一次 → 視窗拉長到 75 秒、最多 6 句（CarPlay 卡片最多列 5 句 + 目前句）
+        // 延長快歌的可用範圍；保留75秒視窗，句數上限提高至10句。
         XCTAssertEqual(policy.seconds, 75)
         XCTAssertEqual(policy.minLines, 2)
-        XCTAssertEqual(policy.maxLines, 6)
+        XCTAssertEqual(policy.maxLines, 10)
         XCTAssertEqual(policy.maxCharacters, 40)
     }
 
-    /// 每 3 秒一句、共 10 句，目前在第 2 句（位置 4.5）：75 秒內全部會開始，但最多 6 句
+    /// 每 3 秒一句、共 20 句，目前在第 2 句（位置 4.5）：視窗最多10句
     func testWindowCappedAtMaxLines() {
-        let lines = Fixture.lines(count: 10)
+        let lines = Fixture.lines(count: 20)
         let w = policy.upcoming(lines: lines, currentIndex: 1, effectivePosition: 4.5, now: t0)
-        XCTAssertEqual(w.map(\.text), ["測試第3句", "測試第4句", "測試第5句", "測試第6句", "測試第7句", "測試第8句"])
+        XCTAssertEqual(w.map(\.text), (3...12).map { "測試第\($0)句" })
+        XCTAssertEqual(w.last?.endAt, t0.addingTimeInterval(32.5))
         // 第 3 句在 7 秒：距離現在 2.5 秒；結束 = 第 4 句開始（10 秒）
         XCTAssertEqual(w[0].startAt, t0.addingTimeInterval(2.5))
         XCTAssertEqual(w[0].endAt, t0.addingTimeInterval(5.5))
